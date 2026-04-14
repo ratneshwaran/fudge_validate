@@ -1,0 +1,181 @@
+"""Load STAR dataset and build supervised dialogue flows from task definitions."""
+import json
+from pathlib import Path
+from collections import defaultdict
+
+from .types import Utterance, Conversation, IntentBucket, DialogueFlow
+
+
+def load_star_dialogues(star_dir: str) -> list[Conversation]:
+    """
+    Load all dialogues from STAR.
+
+    Wizard 'pick_suggestion' events are the agent utterances (with ActionLabel = intent).
+    User 'utter' events are the user utterances.
+    Task is identified from APIName in query events.
+    """
+    conversations = []
+    dialogue_dir = Path(star_dir) / "dialogues"
+
+    for filename in sorted(dialogue_dir.glob("*.json"), key=lambda f: int(f.stem)):
+        with open(filename) as f:
+            data = json.load(f)
+
+        utterances = []
+        task = ""
+        intent_sequence = []  # (intent_label, actor, text) for flow building
+
+        # First pass: collect raw events
+        raw_events = []
+        for event in data.get("Events", []):
+            if event.get("APIName") and not task:
+                task = event["APIName"]
+
+            if event.get("Agent") == "User" and event.get("Action") == "utter":
+                text = event.get("Text", "")
+                if text:
+                    raw_events.append(("user", None, text))
+
+            elif event.get("Agent") == "Wizard" and event.get("Action") == "pick_suggestion":
+                text = event.get("Text", "")
+                label = event.get("ActionLabel", "")
+                if text:
+                    raw_events.append(("agent", label, text))
+
+        # Second pass: label user utterances by the next agent intent
+        for i, (actor, label, text) in enumerate(raw_events):
+            utterances.append(Utterance(actor=actor, text=text))
+            if actor == "user":
+                # Find next agent intent to create a contextual label
+                next_label = "unknown"
+                for j in range(i + 1, len(raw_events)):
+                    if raw_events[j][0] == "agent" and raw_events[j][1]:
+                        next_label = raw_events[j][1]
+                        break
+                intent_sequence.append((f"user_before_{next_label}", "user", text))
+            else:
+                intent_sequence.append((label, "agent", text))
+
+        if utterances and task:
+            conv = Conversation(utterances=utterances, task=task)
+            conv._intent_sequence = intent_sequence  # stash for flow building
+            conversations.append(conv)
+
+    return conversations
+
+
+def group_by_task(conversations: list[Conversation]) -> dict[str, list[Conversation]]:
+    """Group conversations by task name."""
+    result: dict[str, list[Conversation]] = defaultdict(list)
+    for conv in conversations:
+        result[conv.task].append(conv)
+    return dict(result)
+
+
+def build_flow_from_task_definition(star_dir: str, task_name: str) -> tuple[DialogueFlow, list[IntentBucket]]:
+    """
+    Build a DialogueFlow from the official STAR task definition JSON.
+
+    The task JSON has:
+    - 'replies': dict mapping intent_label -> template text
+    - 'graph': dict mapping intent_label -> next_intent_label (linear transitions)
+
+    This gives us the official task flow structure.
+    """
+    task_dir = Path(star_dir) / "tasks" / task_name
+    task_file = task_dir / f"{task_name}.json"
+
+    with open(task_file) as f:
+        task_data = json.load(f)
+
+    replies = task_data.get("replies", {})
+    graph = task_data.get("graph", {})
+
+    # Build intent buckets from template replies
+    # All replies are agent utterances in the task definition
+    buckets: dict[str, IntentBucket] = {}
+    for label, text in replies.items():
+        buckets[label] = IntentBucket(actor="agent", utterances=[text], label=label)
+
+    # Build flow from graph
+    flow = DialogueFlow()
+    for label in buckets:
+        flow.add_node(label, buckets[label])
+
+    # Find root(s): nodes that appear as source but not as target
+    sources = set(graph.keys())
+    targets = set(graph.values())
+    roots = sources - targets
+    if not roots:
+        roots = {list(graph.keys())[0]} if graph else set()
+
+    for root_label in roots:
+        flow.add_edge(flow.root, root_label)
+
+    for src, dst in graph.items():
+        if src in buckets and dst in buckets:
+            flow.add_edge(src, dst)
+
+    return flow, list(buckets.values())
+
+
+def build_flow_from_conversations(conversations: list[Conversation],
+                                  star_dir: str = "",
+                                  task_name: str = "") -> tuple[DialogueFlow, list[IntentBucket]]:
+    """
+    Build a supervised flow as a prefix-trie DAG from observed intent sequences.
+
+    Each conversation has an _intent_sequence: list of (label, actor, text).
+    We merge common prefixes into a trie, then attach intent buckets to each node.
+
+    This avoids parsing the task definition's conditional graph structure.
+    """
+    # Step 1: Extract (actor, label) sequences and collect utterances per (actor, label)
+    utterances_by_key: dict[tuple[str, str], list[str]] = defaultdict(list)
+    sequences: list[list[tuple[str, str]]] = []
+
+    for conv in conversations:
+        if not hasattr(conv, '_intent_sequence'):
+            continue
+        seq = []
+        for label, actor, text in conv._intent_sequence:
+            key = (actor, label)
+            utterances_by_key[key].append(text)
+            seq.append(key)
+        if seq:
+            sequences.append(seq)
+
+    # Step 2: Build intent buckets per (actor, label)
+    buckets: dict[tuple[str, str], IntentBucket] = {}
+    for key, texts in utterances_by_key.items():
+        actor, label = key
+        unique_texts = list(dict.fromkeys(texts))
+        buckets[key] = IntentBucket(actor=actor, utterances=unique_texts, label=label)
+
+    all_buckets = list(buckets.values())
+
+    # Step 3: Build prefix-trie DAG
+    flow = DialogueFlow()
+    node_counter = 0
+
+    # Trie node: dict mapping (actor,label) -> child_trie_node
+    # Each trie node also stores its flow node_id
+    class TrieNode:
+        def __init__(self, node_id: str):
+            self.node_id = node_id
+            self.children: dict[tuple[str, str], 'TrieNode'] = {}
+
+    root_trie = TrieNode(flow.root)
+
+    for seq in sequences:
+        current = root_trie
+        for key in seq:
+            if key not in current.children:
+                node_counter += 1
+                nid = f"n{node_counter}_{key[0]}_{key[1]}"
+                flow.add_node(nid, buckets[key])
+                flow.add_edge(current.node_id, nid)
+                current.children[key] = TrieNode(nid)
+            current = current.children[key]
+
+    return flow, all_buckets
