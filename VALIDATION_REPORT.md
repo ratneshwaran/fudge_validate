@@ -100,11 +100,17 @@ decision points rather than conversational turns. Parsing these correctly would 
 task-specific logic. The prefix-trie avoids this entirely — it captures the actual
 observed conversation structure, including all branching patterns, directly from data.
 
+**Filtering:** Following the paper, conversations containing Wizard free-typed
+utterances (unlabeled agent responses) are excluded. This reduces the dataset from
+289 → 158 hotel_book and 312 → 156 bank_fraud_report conversations, closer to the
+paper's 145 and 180 respectively. The remaining difference is likely due to
+undocumented preprocessing or STAR version differences.
+
 **Flow statistics:**
-- hotel_book: 289 conversations collapsed into a 2329-node trie with 264 distinct
-  root-to-leaf paths, 45 intent buckets (23 user, 22 agent)
-- bank_fraud_report: 312 conversations collapsed into a 2484-node trie with 276
-  distinct paths, 49 intent buckets (25 user, 24 agent)
+- hotel_book: 158 conversations collapsed into a 1252-node trie with 137 distinct
+  root-to-leaf paths, 41 intent buckets (21 user, 20 agent)
+- bank_fraud_report: 156 conversations collapsed into a 1198-node trie with 127
+  distinct paths, 28 intent buckets (14 user, 14 agent)
 
 ### How I tested it
 
@@ -137,8 +143,9 @@ observed conversation structure, including all branching patterns, directly from
 
 **Setup:** For each of two STAR tasks (hotel_book, bank_fraud_report):
 
-1. Loaded all conversations for the task and built a supervised prefix-trie flow from
-   the labeled intent sequences (see "How I constructed the dialogue flows" above).
+1. Loaded conversations for the task (filtering out those with unlabeled agent
+   utterances, per the paper) and built a supervised prefix-trie flow from the
+   labeled intent sequences (see "How I constructed the dialogue flows" above).
 2. Sampled 50% of in-task conversations as positives.
 3. Sampled an equal number of out-of-task conversations (from all other STAR tasks)
    as negatives.
@@ -152,44 +159,44 @@ observed conversation structure, including all branching patterns, directly from
 Recall: **lower scores = better match to the flow**. In-task conversations should score
 low; out-of-task conversations should score high.
 
-### hotel_book (144 positives, 144 negatives)
+### hotel_book (79 positives, 79 negatives)
 
 | Group | Mean | Std | Interpretation |
 |-------|------|-----|----------------|
-| In-task (positives) | **0.1815** | 0.0612 | Low (good match) |
-| Out-of-task (negatives) | **0.5488** | 0.1648 | High (poor match) |
+| In-task (positives) | **0.1684** | 0.0681 | Low (good match) |
+| Out-of-task (negatives) | **0.5046** | 0.1608 | High (poor match) |
 
-- Separation: 0.3672
-- Ratio: 3.02x (out-of-task scores are 3x higher than in-task)
-- **STRONG PASS**: no overlap at 1-sigma (0.1815 + 0.0612 = 0.2427 < 0.3840 = 0.5488 - 0.1648)
+- Separation: 0.3362
+- Ratio: 3.00x (out-of-task scores are 3x higher than in-task)
+- **STRONG PASS**: no overlap at 1-sigma (0.1684 + 0.0681 = 0.2365 < 0.3438 = 0.5046 - 0.1608)
 
-### bank_fraud_report (156 positives, 156 negatives)
+### bank_fraud_report (78 positives, 78 negatives)
 
 | Group | Mean | Std | Interpretation |
 |-------|------|-----|----------------|
-| In-task (positives) | **0.1735** | 0.0503 | Low (good match) |
-| Out-of-task (negatives) | **0.6382** | 0.0947 | High (poor match) |
+| In-task (positives) | **0.1604** | 0.0513 | Low (good match) |
+| Out-of-task (negatives) | **0.5926** | 0.0835 | High (poor match) |
 
-- Separation: 0.4647
-- Ratio: 3.68x (out-of-task scores are 3.7x higher than in-task)
-- **STRONG PASS**: no overlap at 1-sigma (0.1735 + 0.0503 = 0.2238 < 0.5435 = 0.6382 - 0.0947)
+- Separation: 0.4322
+- Ratio: 3.69x (out-of-task scores are 3.7x higher than in-task)
+- **STRONG PASS**: no overlap at 1-sigma (0.1604 + 0.0513 = 0.2117 < 0.5091 = 0.5926 - 0.0835)
 
 ### Comparison to Paper (Table 1b, ALG1-Centroid)
 
 | Metric | Paper (Hotel) | Mine (Hotel) | Paper (Bank) | Mine (Bank) |
 |--------|--------------|-------------|-------------|-------------|
-| Positive mean (lower = better) | 0.08 | 0.18 | 0.09 | 0.17 |
-| Positive std | 0.03 | 0.06 | 0.04 | 0.05 |
-| Negative mean (higher = worse match) | 0.59 | 0.55 | 0.63 | 0.64 |
-| Negative std | 0.18 | 0.16 | 0.19 | 0.09 |
+| Positive mean (lower = better) | 0.08 | 0.17 | 0.09 | 0.16 |
+| Positive std | 0.03 | 0.07 | 0.04 | 0.05 |
+| Negative mean (higher = worse match) | 0.59 | 0.50 | 0.63 | 0.59 |
+| Negative std | 0.18 | 0.16 | 0.19 | 0.08 |
 
 My positive (in-task) scores are roughly 2x the paper's. This is expected: the paper
-uses FF1-generated flows built from optimized intent clusters, while I used prefix-trie
+uses ALG1-generated flows (proprietary flow discovery), while I used prefix-trie
 flows from raw intent sequences. The trie approach preserves every observed conversation
 path, making it noisier — a conversation may not exactly match any single trie path even
 if it follows the task correctly, pushing scores up. The negative (out-of-task) scores
-are nearly identical to the paper's, confirming the out-of-task distance is consistent
-regardless of flow construction method.
+are close to the paper's, confirming the out-of-task distance is consistent regardless
+of flow construction method.
 
 The critical point: **the discrimination pattern holds**. In-task conversations score
 low (good match) and out-of-task conversations score high (poor match), with clear
@@ -201,10 +208,10 @@ flows.
 With caching (d1, B* lookup, and substitution cost cached by bucket+utterance):
 - In-task: ~15-20 conversations/second
 - Out-of-task: ~2-5 conversations/second (longer, more diverse utterances)
-- Full experiment (both tasks, 600 conversations total): ~2.5 minutes
+- Full experiment (both tasks, ~314 conversations total): ~1 minute
 
 Without caching the same experiment took over 30 minutes. The caching exploits the fact
-that the 2300+ trie nodes map to only 45 unique intent buckets, so most substitution
+that the 1200+ trie nodes map to only ~35 unique intent buckets, so most substitution
 cost lookups are cache hits.
 
 ## Conclusion

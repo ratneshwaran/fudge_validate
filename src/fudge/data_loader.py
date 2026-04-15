@@ -6,13 +6,18 @@ from collections import defaultdict
 from .types import Utterance, Conversation, IntentBucket, DialogueFlow
 
 
-def load_star_dialogues(star_dir: str) -> list[Conversation]:
+def load_star_dialogues(star_dir: str, filter_unlabeled: bool = True) -> list[Conversation]:
     """
-    Load all dialogues from STAR.
+    Load dialogues from STAR.
 
     Wizard 'pick_suggestion' events are the agent utterances (with ActionLabel = intent).
     User 'utter' events are the user utterances.
     Task is identified from APIName in query events.
+
+    If filter_unlabeled is True (default), conversations containing Wizard 'utter'
+    events (free-typed agent responses with no intent label) are excluded.  The paper
+    states: "We processed the dialogues in the STAR dataset and removed those with
+    unlabeled agent utterances."
     """
     conversations = []
     dialogue_dir = Path(star_dir) / "dialogues"
@@ -24,6 +29,7 @@ def load_star_dialogues(star_dir: str) -> list[Conversation]:
         utterances = []
         task = ""
         intent_sequence = []  # (intent_label, actor, text) for flow building
+        has_unlabeled_agent = False
 
         # First pass: collect raw events
         raw_events = []
@@ -41,6 +47,13 @@ def load_star_dialogues(star_dir: str) -> list[Conversation]:
                 label = event.get("ActionLabel", "")
                 if text:
                     raw_events.append(("agent", label, text))
+
+            elif event.get("Agent") == "Wizard" and event.get("Action") == "utter":
+                if event.get("Text", ""):
+                    has_unlabeled_agent = True
+
+        if filter_unlabeled and has_unlabeled_agent:
+            continue
 
         # Second pass: label user utterances by the next agent intent
         for i, (actor, label, text) in enumerate(raw_events):
