@@ -1,0 +1,179 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[margin=2.2cm]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{forest}
+\usepackage{url}
+\usepackage[hidelinks]{hyperref}
+\usepackage{parskip}
+\usepackage{enumitem}
+\usepackage{titlesec}
+
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{6pt}
+\setlist[enumerate]{topsep=4pt,itemsep=3pt,leftmargin=1.5em}
+\setlist[itemize]{topsep=4pt,itemsep=3pt,leftmargin=1.5em}
+
+\titleformat{\section}{\large\bfseries}{\thesection}{0.7em}{}
+\titleformat{\subsection}{\normalsize\bfseries}{\thesubsection}{0.7em}{}
+
+\title{\textbf{FuDGE Validation -- Progress Summary}}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section{What is FuDGE?}
+
+FuDGE (Fuzzy Dialogue-Graph Edit Distance) is a metric from arXiv
+\url{https://arxiv.org/pdf/2411.10416} that measures how well a conversation aligns with a dialogue flow, represented as a DAG of intent nodes. It computes an edit distance in which each utterance in the conversation is aligned to a node in the flow through substitution, insertion, or deletion. Substitution is based on semantic similarity using Sentence-BERT. Lower scores indicate a better match.
+
+\section{Dataset and Preprocessing}
+
+\textbf{STAR} (Schema-guided Task-oriented dialog for transfer learning) is a public dataset of 5,820 task-oriented dialogues across 13 domains. Each conversation consists of alternating user and agent utterances. Agent utterances are annotated with intent labels, for example \texttt{ask\_name} or \texttt{hotel\_ask\_date\_from}, via Wizard \texttt{pick\_suggestion} events. User utterances have no intent annotations.
+
+Two tasks were selected following the paper: \textbf{hotel\_book} and \textbf{bank\_fraud\_report}.
+
+\textbf{Preprocessing steps}
+\begin{enumerate}
+    \item \textbf{Filtering.} Conversations containing Wizard free-typed utterances (\texttt{utter} events, that is, agent responses with no intent label) were removed, following the paper's stated methodology. This reduced \texttt{hotel\_book} from 289 to 158 and \texttt{bank\_fraud\_report} from 312 to 156 conversations. The paper reports 145 and 180 respectively, so the remaining gap is likely due to undocumented preprocessing or differences in the STAR version used.
+
+    \item \textbf{User utterance labeling.} STAR only labels agent utterances. To include user turns in the flow, each user utterance was labeled based on the next agent intent. For example, if a user says ``Hi, I need a hotel'' and the next agent action is \texttt{ask\_name}, the user utterance is labeled \texttt{user\_before\_ask\_name}. This is our own heuristic. The paper's Algorithm 1 handles user utterances differently, noting that ``user utterances get grouped as a by-product of graph minimization''.
+\end{enumerate}
+
+\section{What was done}
+
+FuDGE was implemented from scratch in Python following the paper's equations, then used to run the discrimination experiment from Table~1b on the STAR dataset. The goal was to verify that FuDGE assigns low scores to in-task conversations and high scores to out-of-task conversations.
+
+\textbf{Implementation.} Both the naive version (Algorithm~1) and the efficient version (Algorithm~2) of the scoring algorithm were implemented. A total of 47 unit tests confirmed that they produce identical results. Insertion and deletion costs were fixed at 1.0. The substitution cost mechanism is described below.
+
+\subsection{Substitution cost}
+
+Each node in the flow holds an \textbf{intent bucket}: a cluster of all utterances observed for that intent across the training conversations. For example, the \texttt{ask\_name} bucket might contain 150 utterances such as ``What is your name?'', ``May I have your name please?'', and ``Your name?''. The bucket is represented by its \textbf{centroid}---the average Sentence-BERT embedding (\texttt{all-MiniLM-L6-v2}) of all its member utterances (Eq~10). A test utterance is also encoded into a single embedding in the same space.
+
+The substitution cost for matching an utterance~$u$ with a bucket~$B_r$ combines two distances (Eq~8):
+\[
+    c_{\text{sub}}(B_r, u) = \alpha \cdot \bigl(d_1(B_r, u) + d_2(B_r, B^*)\bigr), \quad \alpha = 0.5
+\]
+
+\begin{itemize}
+    \item $d_1(B_r, u)$ \textbf{(Eq~11)}: the cosine distance between the bucket centroid and the utterance embedding. This measures whether the utterance \emph{sounds like} this bucket. If the actors do not match (e.g.\ a user utterance against an agent bucket), $d_1 = \infty$.
+    \item $B^*$: the bucket from the entire set of buckets whose centroid is closest to~$u$ (same actor only). This is the bucket the utterance most naturally belongs to.
+    \item $d_2(B_r, B^*)$ \textbf{(Eq~12)}: the cosine distance between the centroids of~$B_r$ and~$B^*$. This measures whether the utterance \emph{belongs} to this bucket. If $B^* = B_r$ (the utterance's best-matching bucket is already the one being matched), then $d_2 = 0$ and there is no penalty. If $B^*$ is a different bucket, $d_2 > 0$ adds a penalty because a better-fitting bucket exists elsewhere.
+\end{itemize}
+
+For example, matching ``When do you arrive?'' against the \texttt{ask\_name} bucket would give a high $d_1$ (semantically different) and a high $d_2$ (the utterance's closest bucket is \texttt{ask\_date}, not \texttt{ask\_name}). Matching it against \texttt{ask\_date} would give a low $d_1$ and $d_2 = 0$.
+
+\textbf{Flow construction.} The paper's flow discovery algorithms (ALG1 and ALG2) are proprietary and unpublished. As a substitute, flows were built using a \textbf{prefix trie}. A prefix trie is a tree in which sequences that begin in the same way share nodes. Each conversation's intent sequence becomes a path: identical prefixes merge into shared nodes, while differences create branches. For example, given three conversations:
+
+\begin{verbatim}
+Conv 1: greet -> ask_name -> ask_hotel -> confirm -> done
+Conv 2: greet -> ask_name -> ask_hotel -> unavailable -> done
+Conv 3: greet -> ask_name -> ask_date -> confirm -> done
+\end{verbatim}
+
+the resulting trie is:
+
+\begin{center}
+\begin{forest}
+for tree={
+    grow'=0,
+    anchor=west,
+    child anchor=west,
+    l sep=1.5em,
+    s sep=0.8em,
+    font=\small\ttfamily
+}
+[ROOT
+  [greet
+    [ask\_name
+      [ask\_hotel
+        [confirm
+          [done]
+        ]
+        [unavailable
+          [done]
+        ]
+      ]
+      [ask\_date
+        [confirm
+          [done]
+        ]
+      ]
+    ]
+  ]
+]
+\end{forest}
+\end{center}
+
+This produces a DAG that captures all observed conversation patterns.
+
+\textbf{Efficient scoring via DFS.} The naive algorithm computes a separate edit distance DP table for every root-to-leaf path in the trie, which is redundant when paths share long prefixes. The efficient algorithm (Algorithm~2) instead performs a single depth-first traversal of the trie. At each node it computes one row of the DP table using its parent's row. Because DFS visits a parent before its children, the parent's row is always available. When the traversal reaches a branching point, each child reuses all the rows computed up to that point. At each leaf node, the final value in the DP row gives the edit distance for that complete path. The minimum across all leaves is the FuDGE score. This reduces the complexity from $O(K \cdot T \cdot n)$ to $O((|V| + |E|) \cdot n)$, where $K$ is the number of paths, $T$ is the maximum path length, and $n$ is the conversation length.
+
+\textbf{Caching.} The substitution cost computation is expensive: it requires a Sentence-BERT forward pass, a $d_1$ calculation, a scan over all buckets to find~$B^*$, and a $d_2$ calculation. However, the trie has many more nodes than unique buckets (e.g.\ 1,252 nodes but only 41 unique buckets for \texttt{hotel\_book}), because different trie branches reuse the same intent. Substitution costs are cached by (bucket, utterance) pair, so the cost is only computed once per unique combination and looked up thereafter.
+
+\section{Results}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lcccc}
+\toprule
+& \textbf{Paper In-task} & \textbf{Ours In-task} & \textbf{Paper Out-of-task} & \textbf{Ours Out-of-task} \\
+\midrule
+\texttt{hotel\_book} & $0.08 \pm 0.03$ & $0.17 \pm 0.07$ & $0.59 \pm 0.18$ & $0.50 \pm 0.16$ \\
+\texttt{bank\_fraud\_report} & $0.09 \pm 0.04$ & $0.16 \pm 0.05$ & $0.63 \pm 0.19$ & $0.59 \pm 0.08$ \\
+\bottomrule
+\end{tabular}
+\caption{Normalised FuDGE scores: paper (ALG1-Centroid) vs.\ ours (prefix-trie).}
+\end{table}
+
+Both tasks show clear discrimination, with score ratios of $3.0\times$ and $3.7\times$, and no distributional overlap at $1\sigma$. In-task scores are approximately twice those reported in the paper, which is expected because the prefix-trie construction is likely noisier than ALG1. Out-of-task scores are close to those reported in the paper.
+
+\textbf{Conclusion.} FuDGE appears to be validated as an effective distance metric for dialogue flows.
+
+\section{Known differences from paper}
+
+\begin{itemize}
+    \item Flow construction: prefix-trie (ours) versus ALG1 (paper, proprietary)
+    \item Dataset size: 158/156 conversations versus the paper's 145/180
+    \item Sentence-BERT model: the paper does not specify the exact model used
+    \item No statistical significance test was run, such as Mann--Whitney U; only $1\sigma$ separation was checked
+\end{itemize}
+
+\section{Next steps}
+
+\begin{enumerate}
+    \item Apply FuDGE to Thousand Voices, a mental health dataset. This requires LLM-based intent annotation because no intent labels currently exist.
+    \item Implement an LLM-as-a-judge baseline on STAR for comparison.
+    \item Implement FF1 (Flow-F1 Score) for flow quality evaluation.
+\end{enumerate}
+
+\section{Clarifying questions}
+
+\begin{enumerate}
+    \item \textbf{Is the full prefix trie compared with one conversation?} Yes. FuDGE compares one conversation against the entire trie at once. It finds the minimum edit distance between that conversation and any root-to-leaf path. This is repeated independently for every test conversation.
+
+    \item \textbf{Is the conversation a trie as well?} No. The conversation is a flat list of utterances. The comparison is sequence-to-sequence: a flat list of utterances on one side, a flat sequence of intent buckets (one path through the trie) on the other. The trie structure only matters for efficiently trying all paths.
+
+    \item \textbf{Is it comparing an average of all conversations at a node to one utterance?} Yes. Each node holds an intent bucket whose centroid is the average Sentence-BERT embedding of all training utterances for that intent. A single test utterance is also encoded into one embedding. The cosine distance between these two vectors is~$d_1$.
+
+    \item \textbf{How is a conversation matched to a centroid if one is an average?} The centroid is not treated as a replacement for the utterance. It is a reference point. If the test utterance is the same kind of thing as the bucket (e.g.\ both about asking a name), its embedding lands near the centroid and the distance is small. If it is something different, the distance is large.
+
+    \item \textbf{What does $d_2$ do?} $d_1$ alone asks ``does this utterance sound like this bucket?'' but two buckets can sound similar while being different intents (e.g.\ \texttt{ask\_checkin\_date} versus \texttt{ask\_checkout\_date}). $d_2$ adds a check: find $B^*$, the bucket closest to the utterance from the full set. If $B^* = B_r$ (the bucket being matched), $d_2 = 0$---no penalty. If $B^*$ is a different bucket, $d_2 > 0$---penalty, because a better-fitting bucket exists elsewhere.
+
+    \item \textbf{How is $d_2$ computed?} It is the cosine distance between two bucket centroids. No utterance is involved---it is purely a bucket-to-bucket distance in embedding space.
+
+    \item \textbf{If $d_2 = 0$, does that mean $B^*$ is the same bucket?} Yes. $d_2 = 0$ means the closest bucket to the utterance is the one being matched. The utterance not only sounds like this bucket ($d_1$ is low) but genuinely belongs here (no other bucket is a better fit).
+
+    \item \textbf{What is DP?} Dynamic programming. It means breaking a problem into smaller subproblems and storing their answers to avoid recomputation. For edit distance, a table is built where each cell uses three already-computed neighbours (deletion, insertion, substitution) to find the cheapest alignment. The bottom-right cell gives the total edit distance.
+
+    \item \textbf{Why was DFS used?} The trie is a tree and each node's DP row depends only on its parent's row. DFS naturally processes parent before child, so the parent's row is always ready. At a branching point, each child reuses all rows computed up to that point. This avoids recomputing shared prefixes, which is the entire speedup over the naive approach.
+\end{enumerate}
+
+\end{document}

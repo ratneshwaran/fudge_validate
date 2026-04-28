@@ -13,6 +13,8 @@ dependencies = [
     "scikit-learn",
     "matplotlib",
     "tqdm",
+    "openai>=1.50",
+    "python-dotenv>=1.0",
 ]
 
 [project.optional-dependencies]
