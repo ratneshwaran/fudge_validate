@@ -919,6 +919,92 @@ async def label_dialogue_window(
     return list(labels), warnings
 
 
+def _chunk_starts(n: int, chunk_size: int, stride: int) -> list[int]:
+    """Compute chunk start offsets covering all n utterances.
+
+    Each chunk is `[start, start + chunk_size)` (clamped to n).
+    Last chunk is anchored to `n - chunk_size` so it reaches the end.
+    For overlap zones, later chunks have more right-context so we want
+    them processed last (caller relies on iteration order).
+    """
+    if n <= 0:
+        return []
+    if n <= chunk_size:
+        return [0]
+    starts = list(range(0, n - chunk_size + 1, stride))
+    if not starts or starts[-1] + chunk_size < n:
+        starts.append(n - chunk_size)
+    return sorted(set(starts))
+
+
+async def label_dialogue_chunk(
+    conv: Conversation,
+    taxonomy_user: list[dict],
+    taxonomy_agent: list[dict],
+    client: LLMClient,
+    embedder: EmbeddingCache,
+    chunk_size: int,
+    stride: int,
+) -> tuple[list[str], list[str]]:
+    """Label a dialogue in overlapping chunks of `chunk_size`, stride `stride`.
+
+    Each chunk is sent to the LLM as a sub-dialogue (reusing the whole-method
+    prompt + schema). For positions in overlap zones, the later chunk's label
+    wins — it has more right-context for those utterances.
+    """
+    n = len(conv.utterances)
+    if n == 0:
+        return [], []
+    starts = _chunk_starts(n, chunk_size, stride)
+    out: list[str | None] = [None] * n
+    warnings: list[str] = []
+
+    for start in starts:
+        end = min(start + chunk_size, n)
+        sub_utts = list(conv.utterances[start:end])
+        sub_conv = Conversation(
+            utterances=sub_utts,
+            task=conv.task,
+            dialogue_id=conv.dialogue_id,
+        )
+        messages = _whole_method_messages(sub_conv, taxonomy_user, taxonomy_agent)
+        schema = whole_method_schema(taxonomy_user, taxonomy_agent, len(sub_utts))
+        parsed = await client.call(
+            stage="label.chunk",
+            messages=messages,
+            schema_name="dialogue_labels",
+            schema=schema,
+        )
+
+        by_index: dict[int, str] = {}
+        for entry in parsed.get("labels", []):
+            i = int(entry["index"])
+            if 0 <= i < len(sub_utts):
+                by_index[i] = entry["label"]
+
+        for i, u in enumerate(sub_utts):
+            tax = taxonomy_user if u.actor == "user" else taxonomy_agent
+            abs_idx = start + i
+            if i not in by_index:
+                warnings.append(
+                    f"dialogue {conv.dialogue_id} chunk@{start} idx {i} (abs {abs_idx}): missing in response"
+                )
+                out[abs_idx] = nearest_taxonomy_label(u.text, tax, embedder)
+                continue
+            out[abs_idx] = _validate_label(
+                by_index[i], u.actor, tax, embedder, warnings,
+                where=f"dialogue {conv.dialogue_id} chunk@{start} idx {i} (abs {abs_idx})",
+            )
+
+    if any(o is None for o in out):
+        missing = [i for i, o in enumerate(out) if o is None]
+        raise RuntimeError(
+            f"chunk method left positions unlabeled for dialogue "
+            f"{conv.dialogue_id}: {missing}"
+        )
+    return [o for o in out if o is not None], warnings
+
+
 # ---------------------------------------------------------------------------
 # Orchestration
 # ---------------------------------------------------------------------------
@@ -926,9 +1012,11 @@ async def label_dialogue_window(
 @dataclass
 class PipelineConfig:
     task: str
-    method: str  # 'whole' | 'window'
+    method: str  # 'whole' | 'window' | 'chunk'
     model: str
     window_size: int
+    chunk_size: int
+    chunk_stride: int
     concurrency: int
     taxonomy_method: str  # 'single_prompt' | 'hybrid' | 'cluster'
     # Cluster-method knobs (used by 'cluster' and 'hybrid')
@@ -1066,10 +1154,17 @@ async def run_pipeline(
             labels, warnings = await label_dialogue_whole(
                 conv, taxonomy["user"], taxonomy["agent"], client, embedder,
             )
-        else:
+        elif method == "chunk":
+            labels, warnings = await label_dialogue_chunk(
+                conv, taxonomy["user"], taxonomy["agent"], client, embedder,
+                cfg.chunk_size, cfg.chunk_stride,
+            )
+        elif method == "window":
             labels, warnings = await label_dialogue_window(
                 conv, taxonomy["user"], taxonomy["agent"], client, embedder, cfg.window_size,
             )
+        else:
+            raise ValueError(f"Unknown --method: {method}")
 
         out_path = method_dir / f"{conv.dialogue_id}.json"
         with open(out_path, "w", encoding="utf-8") as f:
@@ -1107,9 +1202,15 @@ async def run_pipeline(
 def _build_argparser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--task", required=True, help="STAR task (e.g., hotel_book)")
-    p.add_argument("--method", required=True, choices=["whole", "window"])
+    p.add_argument("--method", required=True, choices=["whole", "window", "chunk"])
     p.add_argument("--model", default="gpt-5-mini")
-    p.add_argument("--window-size", type=int, default=7)
+    p.add_argument("--window-size", type=int, default=7,
+                   help="Window size for --method window (utterances around target)")
+    p.add_argument("--chunk-size", type=int, default=5,
+                   help="Chunk size for --method chunk (utterances per LLM call)")
+    p.add_argument("--chunk-stride", type=int, default=4,
+                   help="Stride between chunk starts for --method chunk. "
+                   "Stride < chunk-size produces overlap; later chunks win on overlap positions.")
     p.add_argument("--concurrency", type=int, default=10)
     p.add_argument(
         "--taxonomy-method",
@@ -1161,6 +1262,8 @@ async def _async_main(args: argparse.Namespace) -> None:
         method=args.method,
         model=args.model,
         window_size=args.window_size,
+        chunk_size=args.chunk_size,
+        chunk_stride=args.chunk_stride,
         concurrency=args.concurrency,
         taxonomy_method=args.taxonomy_method,
         cluster_algo=args.cluster_algo,

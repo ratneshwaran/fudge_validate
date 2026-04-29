@@ -178,6 +178,8 @@ def _make_config(
         target_size_min=3,
         target_size_max=8,
         max_prompt_chars=10_000,
+        chunk_size=3,
+        chunk_stride=2,
         skip_taxonomy=False,
         limit=None,
         dry_run=False,
@@ -253,6 +255,31 @@ def test_per_dialogue_files_one_label_per_utterance(tmp_path, embedder, conversa
         assert len(payload["utterance_labels"]) == len(conv.utterances)
         for lbl in payload["utterance_labels"]:
             assert isinstance(lbl, str) and lbl
+
+
+def test_per_dialogue_files_one_label_per_utterance_chunk(tmp_path, embedder, conversations, monkeypatch):
+    cfg = _make_config("chunk", tmp_path)
+    _run(cfg, conversations, embedder, CallCounter(), monkeypatch)
+
+    method_dir = cfg.out_dir / "smoke_task" / cfg.taxonomy_method / "chunk"
+    for conv in conversations:
+        with open(method_dir / f"{conv.dialogue_id}.json", encoding="utf-8") as f:
+            payload = json.load(f)
+        assert len(payload["utterance_labels"]) == len(conv.utterances)
+
+
+def test_chunk_starts_helper():
+    """Coverage of the offset math used by label_dialogue_chunk."""
+    # Short dialogue: one chunk
+    assert M._chunk_starts(n=5, chunk_size=5, stride=4) == [0]
+    assert M._chunk_starts(n=3, chunk_size=5, stride=4) == [0]
+    # Standard case: range walks, then anchored final chunk
+    # n=12 K=5 S=4 -> range(0, 8, 4) = [0, 4]; last 4+5=9 < 12 so append 7
+    assert M._chunk_starts(n=12, chunk_size=5, stride=4) == [0, 4, 7]
+    # Tight case: chunk barely larger than n
+    assert M._chunk_starts(n=6, chunk_size=5, stride=4) == [0, 1]
+    # Empty
+    assert M._chunk_starts(n=0, chunk_size=5, stride=4) == []
 
 
 def test_per_dialogue_files_one_label_per_utterance_window(tmp_path, embedder, conversations, monkeypatch):

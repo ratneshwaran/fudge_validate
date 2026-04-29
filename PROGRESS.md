@@ -58,6 +58,23 @@ The user-side taxonomy had many near-duplicate labels because per-cluster
 naming has no global view. **Switched to single-prompt as the default**;
 cluster method retained for the ablation.
 
+### Stage 2 ablation: chunked labeling ✅ DONE (2026-04-29)
+
+Added `--method chunk` (chunks of 5 utterances, stride 4, last-chunk-wins
+on overlap). Run with the single_prompt taxonomy on both tasks:
+
+| Stage 2 method | hotel ratio | bank ratio | calls | total cost |
+|---|---|---|---|---|
+| whole | 4.60× | 5.08× | 314 | $0.83 |
+| chunk (5/4) | 4.50× | 5.14× | 1171 | $1.55 |
+
+Chunk and whole are statistically equivalent on STAR — differences are
+within 1σ noise, but chunk costs ~2× more. **As expected**: STAR
+dialogues are 8-15 turns, well within one-prompt capacity. The chunk
+infrastructure is in place for Thousand Voices, where dialogues run
+dozens to hundreds of turns and the whole-method prompt would dilute
+the model's attention.
+
 ### 3-method taxonomy ablation ✅ DONE (2026-04-29)
 
 Three taxonomy bootstrap methods compared on both tasks:

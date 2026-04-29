@@ -249,7 +249,7 @@ Heuristic baseline (gold `ActionLabel` agent + `user_before_<...>` user):
 | `hotel_book` | 0.1684 ± 0.0681 | 0.5046 ± 0.1608 | 3.00× |
 | `bank_fraud_report` | 0.1604 ± 0.0513 | 0.5926 ± 0.0835 | 3.69× |
 
-LLM labels, three methods:
+LLM labels, three taxonomy methods (Stage 2 = whole-dialogue labeling):
 
 | method | hotel ratio | bank ratio | hotel labels (u/a) | bank labels (u/a) | total cost |
 |---|---|---|---|---|---|
@@ -267,6 +267,35 @@ Detailed scores:
 | hybrid | `bank_fraud_report` | 0.1496 ± 0.0533 | 0.6096 ± 0.0859 | 0.4600 |
 | cluster | `hotel_book` | 0.1103 ± 0.0412 | 0.5584 ± 0.1564 | 0.4480 |
 | cluster | `bank_fraud_report` | 0.0859 ± 0.0275 | 0.6619 ± 0.0867 | 0.5760 |
+
+### Stage 2 ablation: whole vs chunked labeling (single_prompt taxonomy)
+
+To probe whether sending the full dialogue at once helps or hurts label
+quality, we re-ran Stage 2 with overlapping chunks of 5 utterances (stride
+4 — 1-utterance overlap, last-chunk-wins for overlap positions). Same
+single_prompt taxonomy, same prompt template, just less context per call.
+
+| Stage 2 method | hotel ratio | bank ratio | hotel calls | bank calls | total cost |
+|---|---|---|---|---|---|
+| whole | 4.60× | 5.08× | 158 | 156 | $0.83 |
+| chunk (size 5, stride 4) | 4.50× | **5.14×** | 540 | 631 | $1.55 |
+
+| Stage 2 method | task | in-task ± std | out-of-task ± std | separation |
+|---|---|---|---|---|
+| chunk | `hotel_book` | 0.1174 ± 0.0315 | 0.5287 ± 0.1603 | 0.4113 |
+| chunk | `bank_fraud_report` | 0.1191 ± 0.0311 | 0.6121 ± 0.0871 | 0.4930 |
+
+**Chunked labeling is roughly equivalent to whole-dialogue labeling on STAR.**
+hotel_book drops slightly (4.60× → 4.50×); bank_fraud_report ticks up
+slightly (5.08× → 5.14×); both differences are within 1σ noise. The chunk
+method costs ~2× more (3-4 calls per dialogue instead of 1) for no real
+quality gain on short STAR dialogues (8-15 turns).
+
+This is the expected result. STAR's average dialogue fits comfortably in
+one prompt; there is nothing for chunking to clean up. The chunk method
+exists for **Thousand Voices**, where therapy dialogues run dozens to
+hundreds of turns and the whole-method prompt would dilute the model's
+attention. The infrastructure is now in place for that.
 
 All three methods STRONG PASS on both tasks (no 1σ overlap), and all three
 beat the heuristic baseline.

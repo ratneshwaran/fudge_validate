@@ -123,7 +123,7 @@ def _parse_args():
     p.add_argument(
         "--label-method",
         default="whole",
-        choices=["whole", "window"],
+        choices=["whole", "window", "chunk"],
         help="Labeling method subdir under <label-root>/<task>/<taxonomy-method>/ "
         "(default: whole). Only used when --label-root is set.",
     )
