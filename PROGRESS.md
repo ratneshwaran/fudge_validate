@@ -93,38 +93,75 @@ Phase 4.
 
 ---
 
-## Phase 4 — Re-run Table 1b with LLM labels ⏳ NEXT (user action)
+## Phase 4 — Re-run Table 1b with LLM labels ✅ DONE — STRONG PASS
 
-To execute (assumes `OPENAI_API_KEY` is in `.env`):
+### Labeling runs complete (2026-04-29)
 
-```bash
-# 1. Generate labels (single-prompt taxonomy, whole-dialogue labeling)
-python scripts/llm_label_star.py --task hotel_book --method whole
-python scripts/llm_label_star.py --task bank_fraud_report --method whole
+Pure-LLM labeling: both user and agent utterances re-labeled by GPT-5 mini
+(gold STAR `ActionLabel` is **not** used at any point — the LLM bootstraps
+the agent taxonomy from utterance text alone). Single-prompt taxonomy
+method, whole-dialogue labeling.
 
-# 2. Re-run Table 1b with the new labels
-python experiments/validate_discrimination.py \
-    --label-root data/STAR_llm_labels --label-method whole
-```
+| task | dialogues | user labels | agent labels | API calls | tokens (in/out) | cost |
+|---|---|---|---|---|---|---|
+| `hotel_book` | 158 | 17 | 19 | 157 (5 hits) | 222k / 172k | $0.40 |
+| `bank_fraud_report` | 156 | 20 | 13 | 158 | 224k / 189k | $0.43 |
 
-Compare to the heuristic baseline in `VALIDATION_REPORT.md`. Key question:
-do LLM labels preserve the 3-4× discrimination ratio?
+bank_fraud_report had 3 off-taxonomy warnings (LLM returned a label not in
+the actor's taxonomy → embedding fallback to nearest valid label). Logged
+in `logs/llm_label_bank_fraud_report_whole_20260429T203015Z.jsonl`.
 
-- If yes: drop-in replacement; Thousand Voices is unblocked.
-- If no: investigate which step degrades (taxonomy granularity vs labeling
-  accuracy) before scaling.
+Taxonomies look semantically clean (e.g. hotel agent side: `greeting`,
+`ask_name`, `ask_hotel_choice`, `ask_checkin_date`, `ask_checkout_date`,
+`offer_booking_confirmation`, `inform_booking_success`,
+`inform_no_availability`, `closing_goodbye`, ...). Comparable granularity
+to STAR's gold `ActionLabel` set.
+
+### Prompts used
+
+Two prompts, both constrained by JSON schema:
+
+- **Stage 1 — taxonomy bootstrap**:
+  `scripts/llm_label_star.py:_single_prompt_messages` (one call per actor;
+  asks for 12-30 distinct intents, snake_case labels, no slot-value
+  duplicates).
+- **Stage 2 — whole-dialogue labeling**:
+  `scripts/llm_label_star.py:_whole_method_messages` (one call per
+  dialogue; sends both taxonomies + dialogue indexed `[i] (actor) text`,
+  enum-constrained label per utterance).
+
+Literal prompt + response for any call: `logs/llm_label_*.jsonl`.
+
+### Validation results (2026-04-29)
+
+LLM labels **improved** discrimination over the heuristic baseline:
+
+| task | heuristic ratio | LLM ratio | verdict |
+|---|---|---|---|
+| `hotel_book` | 3.00× | **4.60×** | STRONG PASS |
+| `bank_fraud_report` | 3.69× | **5.08×** | STRONG PASS |
+
+In-task means dropped (0.17 → 0.11, 0.16 → 0.12) while out-of-task means
+stayed roughly flat. The LLM taxonomy carves in-task dialogues into tighter
+`(actor, label)` buckets than the heuristic does. Full numbers and analysis
+in `VALIDATION_REPORT.md`.
+
+**Implication: LLM labeling is a drop-in replacement, not a fallback.**
+Thousand Voices is unblocked.
 
 ---
 
-## Phase 5 — Apply to Thousand Voices ⏳ END GOAL
+## Phase 5 — Apply to Thousand Voices ⏳ UNBLOCKED
 
-Once Phase 4 confirms LLM labeling doesn't break discrimination, run it on
-Thousand Voices (mental health). No gold labels there, so we go directly
-with whichever taxonomy method we settled on.
+Phase 4 confirmed LLM labeling not only preserves but improves discrimination,
+so the same pipeline transfers directly to Thousand Voices (mental health).
+No gold labels needed.
 
-Dependencies:
-- Thousand Voices dataset access / loader (not yet in repo)
-- Phase 4 results landed
+Remaining dependencies:
+- Thousand Voices dataset loader (not yet in repo) — needs to mirror
+  `load_star_dialogues` so it produces `Conversation` objects with
+  `dialogue_id`, `task`, and `utterances`. The labeling script and the
+  validation script will both work as-is once that exists.
 
 ---
 
