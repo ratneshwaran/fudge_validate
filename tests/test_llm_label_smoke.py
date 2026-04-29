@@ -81,6 +81,17 @@ def _build_fake_openai(counter: CallCounter):
                     "description": f"Auto-generated {actor} intent {counter.n}.",
                 }
             )
+        elif name == "unified_taxonomy":
+            # Single-prompt method. Inspect the user message to know the actor.
+            msg = kwargs["messages"][-1]["content"]
+            actor = "user" if "by the user" in msg else "agent"
+            tax = [
+                {"label": f"{actor}_greet", "description": f"{actor} greeting"},
+                {"label": f"{actor}_request_info", "description": f"{actor} requesting info"},
+                {"label": f"{actor}_provide_info", "description": f"{actor} providing info"},
+                {"label": f"{actor}_close", "description": f"{actor} closing the conversation"},
+            ]
+            content = json.dumps({"taxonomy": tax})
         elif name == "dialogue_labels":
             enum = schema["properties"]["labels"]["items"]["properties"]["label"]["enum"]
             n = schema["properties"]["labels"]["minItems"]
@@ -117,10 +128,11 @@ def embedder() -> EmbeddingCache:
 
 
 def _make_conv(dialogue_id: int, turns: list[tuple[str, str]]) -> Conversation:
-    conv = Conversation(utterances=[Utterance(actor=a, text=t) for a, t in turns])
-    conv.dialogue_id = dialogue_id
-    conv.task = "smoke_task"
-    return conv
+    return Conversation(
+        utterances=[Utterance(actor=a, text=t) for a, t in turns],
+        task="smoke_task",
+        dialogue_id=dialogue_id,
+    )
 
 
 @pytest.fixture
@@ -145,18 +157,26 @@ def conversations() -> list[Conversation]:
     ]
 
 
-def _make_config(method: str, tmp_path: Path) -> M.PipelineConfig:
+def _make_config(
+    method: str,
+    tmp_path: Path,
+    taxonomy_method: str = "single_prompt",
+) -> M.PipelineConfig:
     return M.PipelineConfig(
         task="smoke_task",
         method=method,
         model="gpt-5-mini",
         window_size=5,
         concurrency=4,
+        taxonomy_method=taxonomy_method,
         cluster_algo="agglo",
         cluster_threshold=0.55,
         cluster_k=None,
         n_samples_per_cluster=3,
         merge_threshold=0.85,
+        target_size_min=3,
+        target_size_max=8,
+        max_prompt_chars=10_000,
         skip_taxonomy=False,
         limit=None,
         dry_run=False,
@@ -243,6 +263,16 @@ def test_per_dialogue_files_one_label_per_utterance_window(tmp_path, embedder, c
         with open(method_dir / f"{conv.dialogue_id}.json", encoding="utf-8") as f:
             payload = json.load(f)
         assert len(payload["utterance_labels"]) == len(conv.utterances)
+
+
+def test_cluster_method_still_works(tmp_path, embedder, conversations, monkeypatch):
+    """Cluster method is preserved for the planned ablation; cover its happy path."""
+    cfg = _make_config("whole", tmp_path, taxonomy_method="cluster")
+    _run(cfg, conversations, embedder, CallCounter(), monkeypatch)
+    tax_path = cfg.out_dir / "smoke_task" / "taxonomy.json"
+    with open(tax_path, encoding="utf-8") as f:
+        tax = json.load(f)
+    assert tax["user"] and tax["agent"]
 
 
 def test_cache_prevents_second_api_call(tmp_path, embedder, conversations, monkeypatch):

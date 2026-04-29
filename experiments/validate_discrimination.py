@@ -12,14 +12,30 @@ For each task:
 Expected (Table 1b, ALG1-Centroid):
   Hotel Book:        positives 0.08 +/- 0.03, negatives 0.59 +/- 0.18
   Bank Fraud Report: positives 0.09 +/- 0.04, negatives 0.63 +/- 0.19
+
+CLI:
+  # default: heuristic labels (user_before_<next_agent_intent>)
+  python experiments/validate_discrimination.py
+
+  # use LLM-generated labels from scripts/llm_label_star.py
+  python experiments/validate_discrimination.py \
+      --label-root data/STAR_llm_labels --label-method whole
 """
+import argparse
 import sys
+from pathlib import Path
+
 sys.modules["tensorflow"] = None
 
 import numpy as np
 from tqdm import tqdm
 
-from fudge.data_loader import load_star_dialogues, group_by_task, build_flow_from_conversations
+from fudge.data_loader import (
+    build_flow_from_conversations,
+    group_by_task,
+    load_llm_labels,
+    load_star_dialogues,
+)
 from fudge.embeddings import EmbeddingCache
 from fudge.costs import FudgeCosts
 from fudge.fudge_efficient import fudge_efficient
@@ -83,22 +99,70 @@ def run_discrimination_experiment(
     return pos_scores, neg_scores
 
 
+def _parse_args():
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument(
+        "--tasks",
+        nargs="+",
+        default=["hotel_book", "bank_fraud_report"],
+        help="STAR tasks to evaluate (default: hotel_book bank_fraud_report)",
+    )
+    p.add_argument(
+        "--label-root",
+        default=None,
+        help="Root dir of LLM-generated labels (e.g. data/STAR_llm_labels). "
+        "When omitted, uses the heuristic user_before_<next_agent_intent> labels.",
+    )
+    p.add_argument(
+        "--label-method",
+        default="whole",
+        choices=["whole", "window"],
+        help="Subdir under <label-root>/<task>/ (default: whole). Only used "
+        "when --label-root is set.",
+    )
+    p.add_argument("--star-dir", default="data/STAR")
+    return p.parse_args()
+
+
 def main():
+    args = _parse_args()
+    using_llm_labels = args.label_root is not None
+
     print("Loading STAR dataset...")
-    convs = load_star_dialogues("data/STAR")
+    convs = load_star_dialogues(args.star_dir)
     by_task = group_by_task(convs)
 
     print("Initializing embeddings...")
     emb = EmbeddingCache()
 
-    tasks_to_test = ["hotel_book", "bank_fraud_report"]
+    if using_llm_labels:
+        print(f"Using LLM labels from {args.label_root} (method={args.label_method})")
+    else:
+        print("Using heuristic labels (user_before_<next_agent_intent>)")
 
-    for task_name in tasks_to_test:
+    for task_name in args.tasks:
         task_convs = by_task[task_name]
         other_convs = [c for c in convs if c.task != task_name]
 
+        label_source = None
+        if using_llm_labels:
+            label_dir = Path(args.label_root) / task_name / args.label_method
+            if not label_dir.exists():
+                print(f"  [skip] {task_name}: no labels at {label_dir}")
+                continue
+            label_source = load_llm_labels(label_dir)
+            covered = sum(1 for c in task_convs if c.dialogue_id in label_source)
+            print(
+                f"  {task_name}: {covered}/{len(task_convs)} in-task conversations "
+                f"have LLM labels (other-task convs use heuristic for the flow only "
+                f"— flow is built from in-task)"
+            )
+            if covered == 0:
+                print(f"  [skip] {task_name}: no labeled conversations")
+                continue
+
         print(f"\nBuilding flow for {task_name} from {len(task_convs)} conversations...")
-        flow, all_buckets = build_flow_from_conversations(task_convs)
+        flow, all_buckets = build_flow_from_conversations(task_convs, label_source=label_source)
         print(f"  Flow: {flow.num_nodes} nodes, {len(flow.get_all_paths())} paths")
         print(f"  Buckets: {len(all_buckets)} ({len([b for b in all_buckets if b.actor=='user'])} user, {len([b for b in all_buckets if b.actor=='agent'])} agent)")
 

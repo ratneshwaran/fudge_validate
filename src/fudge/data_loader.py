@@ -70,11 +70,35 @@ def load_star_dialogues(star_dir: str, filter_unlabeled: bool = True) -> list[Co
                 intent_sequence.append((label, "agent", text))
 
         if utterances and task:
-            conv = Conversation(utterances=utterances, task=task)
+            conv = Conversation(
+                utterances=utterances,
+                task=task,
+                dialogue_id=int(data.get("DialogueID", -1)),
+            )
             conv._intent_sequence = intent_sequence  # stash for flow building
             conversations.append(conv)
 
     return conversations
+
+
+def load_llm_labels(label_dir: str | Path) -> dict[int, list[str]]:
+    """Load per-dialogue LLM-generated label files.
+
+    Reads every <dialogue_id>.json under `label_dir` produced by
+    scripts/llm_label_star.py. Returns dialogue_id -> utterance_labels (one
+    label per Conversation.utterances entry).
+    """
+    label_dir = Path(label_dir)
+    out: dict[int, list[str]] = {}
+    for f in label_dir.glob("*.json"):
+        try:
+            did = int(f.stem)
+        except ValueError:
+            continue
+        with open(f, encoding="utf-8") as fp:
+            data = json.load(fp)
+        out[did] = list(data["utterance_labels"])
+    return out
 
 
 def group_by_task(conversations: list[Conversation]) -> dict[str, list[Conversation]]:
@@ -134,7 +158,8 @@ def build_flow_from_task_definition(star_dir: str, task_name: str) -> tuple[Dial
 
 def build_flow_from_conversations(conversations: list[Conversation],
                                   star_dir: str = "",
-                                  task_name: str = "") -> tuple[DialogueFlow, list[IntentBucket]]:
+                                  task_name: str = "",
+                                  label_source: dict[int, list[str]] | None = None) -> tuple[DialogueFlow, list[IntentBucket]]:
     """
     Build a supervised flow as a prefix-trie DAG from observed intent sequences.
 
@@ -142,16 +167,38 @@ def build_flow_from_conversations(conversations: list[Conversation],
     We merge common prefixes into a trie, then attach intent buckets to each node.
 
     This avoids parsing the task definition's conditional graph structure.
+
+    If `label_source` is provided (mapping dialogue_id -> [label, label, ...]
+    aligned with Conversation.utterances), the existing _intent_sequence labels
+    are replaced. Actor and text still come from the STAR event; only the label
+    changes. Use this to consume LLM-generated labels from
+    scripts/llm_label_star.py.
     """
     # Step 1: Extract (actor, label) sequences and collect utterances per (actor, label)
     utterances_by_key: dict[tuple[str, str], list[str]] = defaultdict(list)
     sequences: list[list[tuple[str, str]]] = []
 
     for conv in conversations:
-        if not hasattr(conv, '_intent_sequence'):
-            continue
+        if label_source is not None:
+            if conv.dialogue_id < 0 or conv.dialogue_id not in label_source:
+                continue
+            llm_labels = label_source[conv.dialogue_id]
+            if len(llm_labels) != len(conv.utterances):
+                raise ValueError(
+                    f"Label count mismatch for dialogue {conv.dialogue_id}: "
+                    f"{len(llm_labels)} labels vs {len(conv.utterances)} utterances"
+                )
+            triples = [
+                (lbl, u.actor, u.text)
+                for lbl, u in zip(llm_labels, conv.utterances)
+            ]
+        else:
+            if not hasattr(conv, '_intent_sequence'):
+                continue
+            triples = list(conv._intent_sequence)
+
         seq = []
-        for label, actor, text in conv._intent_sequence:
+        for label, actor, text in triples:
             key = (actor, label)
             utterances_by_key[key].append(text)
             seq.append(key)

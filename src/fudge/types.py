@@ -12,6 +12,7 @@ class Utterance:
 class Conversation:
     utterances: list[Utterance]
     task: str = ""
+    dialogue_id: int = -1  # set by load_star_dialogues; -1 = unknown
 
 
 @dataclass

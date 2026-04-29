@@ -3,11 +3,14 @@
 Two-stage closed-taxonomy pipeline:
 
   Stage 1 (taxonomy bootstrap):
-    - SBERT-cluster all user / agent utterances separately.
-    - For each cluster, send the N members closest to the centroid to the LLM
-      and ask for a (snake_case label, one-line description).
-    - Optional cluster-merge pass on the resulting label embeddings.
-    - Save final taxonomy to data/STAR_llm_labels/<task>/taxonomy.json.
+    --taxonomy-method single_prompt (default):
+      Send the LLM all unique utterances for one actor in a single call and
+      ask for a unified taxonomy. Eliminates the synonym / near-duplicate
+      problem the per-cluster naming approach has, since the model produces
+      every label in one pass with full context.
+    --taxonomy-method cluster:
+      SBERT-cluster utterances, name each cluster individually, then merge
+      synonyms post-hoc. Kept for the planned 3-method ablation.
 
   Stage 2 (per-utterance labeling):
     --method whole   : send full dialogue + both taxonomies, LLM returns one
@@ -19,8 +22,8 @@ Outputs are saved per dialogue at
   data/STAR_llm_labels/<task>/<method>/<dialogue_id>.json
 as {"utterance_labels": [...], "taxonomy_version": "<sha>"}.
 
-A separate PR will modify build_flow_from_conversations to consume these
-files. See TODO.md.
+`build_flow_from_conversations(label_source=...)` consumes the files via
+`fudge.data_loader.load_llm_labels`.
 """
 from __future__ import annotations
 
@@ -62,49 +65,16 @@ WHOLE_METHOD_TOKEN_BUDGET = 60_000
 
 
 # ---------------------------------------------------------------------------
-# STAR loader with dialogue IDs
+# STAR loader (filtered by task)
 # ---------------------------------------------------------------------------
 
-def load_star_with_ids(star_dir: str, task: str) -> list[Conversation]:
-    """Load STAR dialogues for a task, attaching dialogue_id to each Conversation.
+def load_star_for_task(star_dir: str, task: str) -> list[Conversation]:
+    """Load STAR dialogues filtered to one task.
 
-    Mirrors the filter logic in data_loader.load_star_dialogues so the IDs line
-    up 1:1 with the conversations it returns. Done here (instead of in
-    data_loader) to keep src/fudge/ untouched in this PR — see TODO.md.
+    `dialogue_id` is now a real field on Conversation (set by
+    data_loader.load_star_dialogues), so no extra walk is needed.
     """
     convs = load_star_dialogues(star_dir, filter_unlabeled=True)
-
-    dialogue_dir = Path(star_dir) / "dialogues"
-    ids: list[int] = []
-    for filename in sorted(dialogue_dir.glob("*.json"), key=lambda f: int(f.stem)):
-        with open(filename, encoding="utf-8") as f:
-            data = json.load(f)
-
-        events = data.get("Events", [])
-        has_unlabeled = any(
-            e.get("Agent") == "Wizard" and e.get("Action") == "utter" and e.get("Text", "")
-            for e in events
-        )
-        if has_unlabeled:
-            continue
-        has_utterances = any(
-            (e.get("Agent") == "User" and e.get("Action") == "utter" and e.get("Text", ""))
-            or (e.get("Agent") == "Wizard" and e.get("Action") == "pick_suggestion" and e.get("Text", ""))
-            for e in events
-        )
-        has_task = any(e.get("APIName") for e in events)
-        if not (has_utterances and has_task):
-            continue
-        ids.append(int(data["DialogueID"]))
-
-    if len(ids) != len(convs):
-        raise RuntimeError(
-            f"ID/conversation count mismatch: {len(ids)} ids vs {len(convs)} convs. "
-            "data_loader filter logic may have diverged from this script's mirror."
-        )
-    for cid, conv in zip(ids, convs):
-        conv.dialogue_id = cid
-
     return [c for c in convs if c.task == task]
 
 
@@ -536,7 +506,7 @@ def merge_taxonomy(
     return merged
 
 
-async def bootstrap_taxonomy_for_actor(
+async def bootstrap_taxonomy_cluster(
     actor: str,
     utterances: list[str],
     client: LLMClient,
@@ -547,6 +517,7 @@ async def bootstrap_taxonomy_for_actor(
     n_samples_per_cluster: int,
     merge_threshold: float,
 ) -> list[dict]:
+    """Cluster-then-name taxonomy. Kept for the planned 3-method ablation."""
     if not utterances:
         return []
     cluster_labels, embeddings = cluster_texts(utterances, embedder, cluster_algo, threshold, k)
@@ -554,6 +525,122 @@ async def bootstrap_taxonomy_for_actor(
     named = await name_clusters(client, actor, reps)
     items = [named[cid] for cid in sorted(named.keys())]
     return merge_taxonomy(items, embedder, merge_threshold)
+
+
+# ---------------------------------------------------------------------------
+# Stage 1 (alt): single-prompt taxonomy bootstrap
+# ---------------------------------------------------------------------------
+
+SINGLE_PROMPT_TAXONOMY_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["taxonomy"],
+    "properties": {
+        "taxonomy": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["label", "description"],
+                "properties": {
+                    "label": {"type": "string"},
+                    "description": {"type": "string"},
+                },
+            },
+        }
+    },
+}
+
+
+def _single_prompt_messages(
+    actor: str,
+    utterances: list[str],
+    target_size_min: int,
+    target_size_max: int,
+) -> list[dict]:
+    rendered = "\n".join(f"  {i + 1}. {t}" for i, t in enumerate(utterances))
+    return [
+        {
+            "role": "system",
+            "content": (
+                "You design a closed intent taxonomy for one side of a "
+                "task-oriented dialogue. Your taxonomy must cover every "
+                "utterance you are shown. Output strict JSON."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"Below are {len(utterances)} utterances spoken by the "
+                f"{actor} in a task-oriented dialogue. Produce a SINGLE "
+                f"taxonomy of distinct intents that together cover all of "
+                f"these utterances.\n\n"
+                f"REQUIREMENTS:\n"
+                f"- Aim for {target_size_min}–{target_size_max} intents. Use "
+                f"the smallest taxonomy that still distinguishes meaningfully "
+                f"different actions.\n"
+                f"- Each intent has a snake_case label (1–4 words) and a one-"
+                f"sentence description.\n"
+                f"- Do NOT produce near-synonyms or two intents that differ "
+                f"only by slot values (e.g. city, date). Generalize: "
+                f"`provide_arrival_date`, not `provide_arrival_date_monday`.\n"
+                f"- Labels must be unique within the taxonomy.\n\n"
+                f"UTTERANCES:\n{rendered}"
+            ),
+        },
+    ]
+
+
+def _sample_for_single_prompt(
+    utterances: list[str],
+    max_chars: int,
+) -> list[str]:
+    """Truncate the utterance list to fit a rough char budget by uniform sampling.
+
+    No sampling for short corpora. Stable: deterministic given input.
+    """
+    total = sum(len(t) + 8 for t in utterances)  # +8 for numbering/newlines
+    if total <= max_chars:
+        return utterances
+    keep = max(50, int(len(utterances) * (max_chars / total)))
+    if keep >= len(utterances):
+        return utterances
+    # Even-spaced sample preserves ordering and picks across the distribution.
+    step = len(utterances) / keep
+    indices = sorted({int(i * step) for i in range(keep)})
+    return [utterances[i] for i in indices if i < len(utterances)]
+
+
+async def bootstrap_taxonomy_single_prompt(
+    actor: str,
+    utterances: list[str],
+    client: LLMClient,
+    target_size_min: int,
+    target_size_max: int,
+    max_prompt_chars: int,
+) -> list[dict]:
+    """Send all unique utterances for an actor in one call; return unified taxonomy."""
+    if not utterances:
+        return []
+    sampled = _sample_for_single_prompt(utterances, max_prompt_chars)
+    messages = _single_prompt_messages(actor, sampled, target_size_min, target_size_max)
+    parsed = await client.call(
+        stage=f"taxonomy.single.{actor}",
+        messages=messages,
+        schema_name="unified_taxonomy",
+        schema=SINGLE_PROMPT_TAXONOMY_SCHEMA,
+    )
+    items = parsed.get("taxonomy", [])
+    # Final dedup on label collisions defensively (the prompt asks for unique labels).
+    seen: set[str] = set()
+    out: list[dict] = []
+    for it in items:
+        lbl = it["label"]
+        if lbl in seen:
+            continue
+        seen.add(lbl)
+        out.append({"label": lbl, "description": it["description"]})
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -807,11 +894,18 @@ class PipelineConfig:
     model: str
     window_size: int
     concurrency: int
+    taxonomy_method: str  # 'single_prompt' | 'cluster'
+    # Cluster-method knobs (ignored when taxonomy_method='single_prompt')
     cluster_algo: str
     cluster_threshold: float
     cluster_k: int | None
     n_samples_per_cluster: int
     merge_threshold: float
+    # Single-prompt knobs (ignored when taxonomy_method='cluster')
+    target_size_min: int
+    target_size_max: int
+    max_prompt_chars: int
+    # Common
     skip_taxonomy: bool
     limit: int | None
     dry_run: bool
@@ -855,21 +949,36 @@ async def run_pipeline(
     else:
         user_texts, agent_texts = collect_utterances_by_actor(convs)
         print(
-            f"[stage1] Bootstrapping taxonomy from {len(user_texts)} unique user "
-            f"utterances and {len(agent_texts)} unique agent utterances"
+            f"[stage1] Bootstrapping taxonomy ({cfg.taxonomy_method}) from "
+            f"{len(user_texts)} unique user utterances and "
+            f"{len(agent_texts)} unique agent utterances"
         )
-        user_taxonomy, agent_taxonomy = await asyncio.gather(
-            bootstrap_taxonomy_for_actor(
-                "user", user_texts, client, embedder,
-                cfg.cluster_algo, cfg.cluster_threshold, cfg.cluster_k,
-                cfg.n_samples_per_cluster, cfg.merge_threshold,
-            ),
-            bootstrap_taxonomy_for_actor(
-                "agent", agent_texts, client, embedder,
-                cfg.cluster_algo, cfg.cluster_threshold, cfg.cluster_k,
-                cfg.n_samples_per_cluster, cfg.merge_threshold,
-            ),
-        )
+        if cfg.taxonomy_method == "single_prompt":
+            user_taxonomy, agent_taxonomy = await asyncio.gather(
+                bootstrap_taxonomy_single_prompt(
+                    "user", user_texts, client,
+                    cfg.target_size_min, cfg.target_size_max, cfg.max_prompt_chars,
+                ),
+                bootstrap_taxonomy_single_prompt(
+                    "agent", agent_texts, client,
+                    cfg.target_size_min, cfg.target_size_max, cfg.max_prompt_chars,
+                ),
+            )
+        elif cfg.taxonomy_method == "cluster":
+            user_taxonomy, agent_taxonomy = await asyncio.gather(
+                bootstrap_taxonomy_cluster(
+                    "user", user_texts, client, embedder,
+                    cfg.cluster_algo, cfg.cluster_threshold, cfg.cluster_k,
+                    cfg.n_samples_per_cluster, cfg.merge_threshold,
+                ),
+                bootstrap_taxonomy_cluster(
+                    "agent", agent_texts, client, embedder,
+                    cfg.cluster_algo, cfg.cluster_threshold, cfg.cluster_k,
+                    cfg.n_samples_per_cluster, cfg.merge_threshold,
+                ),
+            )
+        else:
+            raise ValueError(f"Unknown --taxonomy-method: {cfg.taxonomy_method}")
         taxonomy = {"user": user_taxonomy, "agent": agent_taxonomy}
         with open(taxonomy_path, "w", encoding="utf-8") as f:
             json.dump(taxonomy, f, ensure_ascii=False, indent=2)
@@ -947,6 +1056,20 @@ def _build_argparser() -> argparse.ArgumentParser:
     p.add_argument("--model", default="gpt-5-mini")
     p.add_argument("--window-size", type=int, default=7)
     p.add_argument("--concurrency", type=int, default=10)
+    p.add_argument(
+        "--taxonomy-method",
+        choices=["single_prompt", "cluster"],
+        default="single_prompt",
+        help="single_prompt (default): one LLM call returns the unified taxonomy. "
+        "cluster: SBERT-cluster + per-cluster naming + post-merge.",
+    )
+    p.add_argument("--target-size-min", type=int, default=12,
+                   help="Min taxonomy size hint (single_prompt method)")
+    p.add_argument("--target-size-max", type=int, default=30,
+                   help="Max taxonomy size hint (single_prompt method)")
+    p.add_argument("--max-prompt-chars", type=int, default=120_000,
+                   help="Soft cap on the bootstrap prompt size; uniformly samples "
+                   "utterances if exceeded (single_prompt method)")
     p.add_argument("--cluster-algo", choices=["agglo", "kmeans"], default="agglo")
     p.add_argument(
         "--cluster-threshold",
@@ -981,11 +1104,15 @@ async def _async_main(args: argparse.Namespace) -> None:
         model=args.model,
         window_size=args.window_size,
         concurrency=args.concurrency,
+        taxonomy_method=args.taxonomy_method,
         cluster_algo=args.cluster_algo,
         cluster_threshold=args.cluster_threshold,
         cluster_k=args.cluster_k,
         n_samples_per_cluster=args.centroid_samples,
         merge_threshold=args.merge_threshold,
+        target_size_min=args.target_size_min,
+        target_size_max=args.target_size_max,
+        max_prompt_chars=args.max_prompt_chars,
         skip_taxonomy=args.skip_taxonomy,
         limit=args.limit,
         dry_run=args.dry_run,
@@ -995,7 +1122,7 @@ async def _async_main(args: argparse.Namespace) -> None:
         log_path=_make_log_path(Path(args.log_dir), args.task, args.method),
     )
 
-    convs = load_star_with_ids(str(cfg.star_dir), cfg.task)
+    convs = load_star_for_task(str(cfg.star_dir), cfg.task)
     print(f"Loaded {len(convs)} {cfg.task} dialogues from {cfg.star_dir}")
     if not convs:
         raise SystemExit(f"No conversations found for task={cfg.task}")
