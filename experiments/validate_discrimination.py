@@ -114,11 +114,18 @@ def _parse_args():
         "When omitted, uses the heuristic user_before_<next_agent_intent> labels.",
     )
     p.add_argument(
+        "--taxonomy-method",
+        default="single_prompt",
+        choices=["single_prompt", "hybrid", "cluster"],
+        help="Taxonomy method subdir under <label-root>/<task>/. Only used "
+        "when --label-root is set (default: single_prompt).",
+    )
+    p.add_argument(
         "--label-method",
         default="whole",
         choices=["whole", "window"],
-        help="Subdir under <label-root>/<task>/ (default: whole). Only used "
-        "when --label-root is set.",
+        help="Labeling method subdir under <label-root>/<task>/<taxonomy-method>/ "
+        "(default: whole). Only used when --label-root is set.",
     )
     p.add_argument("--star-dir", default="data/STAR")
     return p.parse_args()
@@ -136,7 +143,10 @@ def main():
     emb = EmbeddingCache()
 
     if using_llm_labels:
-        print(f"Using LLM labels from {args.label_root} (method={args.label_method})")
+        print(
+            f"Using LLM labels from {args.label_root} "
+            f"(taxonomy={args.taxonomy_method}, label={args.label_method})"
+        )
     else:
         print("Using heuristic labels (user_before_<next_agent_intent>)")
 
@@ -146,7 +156,7 @@ def main():
 
         label_source = None
         if using_llm_labels:
-            label_dir = Path(args.label_root) / task_name / args.label_method
+            label_dir = Path(args.label_root) / task_name / args.taxonomy_method / args.label_method
             if not label_dir.exists():
                 print(f"  [skip] {task_name}: no labels at {label_dir}")
                 continue

@@ -58,23 +58,28 @@ The user-side taxonomy had many near-duplicate labels because per-cluster
 naming has no global view. **Switched to single-prompt as the default**;
 cluster method retained for the ablation.
 
-### Deferred: 3-method taxonomy ablation 🔜
+### 3-method taxonomy ablation ✅ DONE (2026-04-29)
 
-Compare three approaches and add a section to `VALIDATION_REPORT.md`:
+Three taxonomy bootstrap methods compared on both tasks:
 
-- **(A) single-prompt** — current default. One LLM call returns the unified
-  taxonomy.
-- **(B) hybrid** — cluster cheaply on embeddings, send 1-2 reps per cluster
-  in one LLM call (not yet implemented).
-- **(C) cluster-then-name** — historical default; available behind
-  `--taxonomy-method cluster`.
+| method | hotel ratio | bank ratio | hotel labels (u/a) | bank labels (u/a) | total cost |
+|---|---|---|---|---|---|
+| **single_prompt** | 4.60× | 5.08× | 17 / 19 | 20 / 13 | $0.83 |
+| **hybrid** | 4.22× | 4.07× | 15 / 18 | 22 / 12 | $0.85 |
+| **cluster** | 5.06× | 7.70× | 122 / 17 | 225 / 12 | $1.62 |
 
-**Proposed metrics:**
-1. Agreement with gold STAR `ActionLabel` on agent turns (V-measure / ARI).
-2. Downstream FuDGE discrimination ratio.
+All three STRONG PASS, all three beat the heuristic (3.00× / 3.69×).
 
-Status: explicitly deferred per user — proceed with single-prompt to unblock
-Phase 4.
+**Cluster wins on raw discrimination but produces over-fragmented
+taxonomies** (225 user labels for `bank_fraud_report`, many near-synonyms).
+**single_prompt is the best parsimony/quality tradeoff** — comparable to
+gold `ActionLabel` granularity at the lowest cost. **hybrid is comparable
+to single_prompt on hotel but underperforms on bank** because clustering
+reduces the input diversity to the naming call.
+
+**Recommendation: use single_prompt for Thousand Voices.** Cluster path
+preserved in codebase for future paper experiments. Full analysis in
+`VALIDATION_REPORT.md`.
 
 ---
 
@@ -174,7 +179,8 @@ pipeline:
 - FF1 (Flow-F1 Score) implementation
 - Statistical significance test (Mann–Whitney U) on existing discrimination
   results — currently we only check 1σ separation
-- 3-method taxonomy ablation (deferred from Phase 2)
+- Held-out taxonomy bootstrap split (50% in-task for taxonomy, 50% for
+  labeling) to isolate fitting effects from genuine quality gains
 
 ---
 

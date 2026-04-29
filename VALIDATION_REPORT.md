@@ -214,70 +214,115 @@ Without caching the same experiment took over 30 minutes. The caching exploits t
 that the 1200+ trie nodes map to only ~35 unique intent buckets, so most substitution
 cost lookups are cache hits.
 
-## Re-running with LLM-generated labels (2026-04-29)
+## LLM-based labeling: 3-method ablation (2026-04-29)
 
 To unblock evaluation on datasets without gold labels (Thousand Voices), the
 heuristic `user_before_<next_agent_intent>` user labels and gold STAR
 `ActionLabel` agent labels were both replaced with **purely LLM-generated
-labels** from `scripts/llm_label_star.py`. Pipeline:
+labels** from `scripts/llm_label_star.py`. Three taxonomy-bootstrap methods
+were compared:
 
-- **Stage 1 (taxonomy bootstrap):** for each actor, send all unique
-  utterances to GPT-5 mini in a single call and ask for a unified
-  closed taxonomy of 12-30 intents (`--taxonomy-method single_prompt`).
-- **Stage 2 (per-utterance labeling):** for each dialogue, send the full
-  dialogue + both taxonomies and ask the model to label every utterance
-  with an enum-constrained intent from the taxonomy of its actor
-  (`--method whole`).
+- **single_prompt**: send the LLM all unique utterances for one actor in a
+  single call; the model returns a unified closed taxonomy of 12-30 intents.
+- **hybrid**: cluster utterances cheaply on SBERT embeddings, send 1-2
+  representatives per cluster in **one** LLM call asking for a unified
+  taxonomy. Long-tail coverage from clustering, no synonyms from
+  single-call naming.
+- **cluster**: SBERT-cluster, name each cluster individually, then merge
+  synonymous clusters by label-embedding similarity.
 
-Both stages use OpenAI structured-output JSON schemas; off-taxonomy returns
-fall back to the nearest valid label by SBERT cosine similarity. Total cost:
-$0.83 across 158 + 156 dialogues. Gold STAR `ActionLabel` is not used at any
-point for label assignment (it is still used for the existing dialogue-level
-filter that drops conversations with free-typed Wizard utterances).
+Stage 2 (per-utterance labeling) is identical across the three methods: send
+the full dialogue + both taxonomies in one call and ask the model to assign
+an enum-constrained label to every utterance from the taxonomy of its actor
+(`--method whole`). Off-taxonomy returns fall back to the nearest valid
+label by SBERT cosine similarity. Gold `ActionLabel` is never used for
+label assignment in any of the three methods (it is still used for the
+dialogue-level filter that drops conversations with free-typed Wizard
+utterances).
 
-Generated taxonomies:
-- `hotel_book`: 17 user labels, 19 agent labels
-- `bank_fraud_report`: 20 user labels, 13 agent labels
+### Results
 
-### Comparison: heuristic baseline vs LLM-generated labels
+Heuristic baseline (gold `ActionLabel` agent + `user_before_<...>` user):
 
-| Task / Group | Heuristic mean ± std | LLM mean ± std |
-|---|---|---|
-| `hotel_book` in-task (positives) | 0.1684 ± 0.0681 | **0.1132 ± 0.0302** |
-| `hotel_book` out-of-task (negatives) | 0.5046 ± 0.1608 | 0.5203 ± 0.1658 |
-| `hotel_book` separation | 0.3362 | **0.4071** |
-| `hotel_book` ratio | 3.00× | **4.60×** |
-| `bank_fraud_report` in-task (positives) | 0.1604 ± 0.0513 | **0.1209 ± 0.0372** |
-| `bank_fraud_report` out-of-task (negatives) | 0.5926 ± 0.0835 | 0.6141 ± 0.0852 |
-| `bank_fraud_report` separation | 0.4322 | **0.4932** |
-| `bank_fraud_report` ratio | 3.69× | **5.08×** |
+| task | in-task mean ± std | out-of-task mean ± std | ratio |
+|---|---|---|---|
+| `hotel_book` | 0.1684 ± 0.0681 | 0.5046 ± 0.1608 | 3.00× |
+| `bank_fraud_report` | 0.1604 ± 0.0513 | 0.5926 ± 0.0835 | 3.69× |
 
-Both tasks STRONG PASS with the LLM labels (no 1σ overlap). In-task means
-dropped substantially while out-of-task means stayed roughly flat — the LLM
-taxonomy carves in-task dialogues into more semantically coherent
-`(actor, label)` buckets than the heuristic does, while leaving the
-out-of-task distance unchanged because those conversations don't match any
-in-task bucket either way.
+LLM labels, three methods:
 
-This confirms the labeling pipeline is a drop-in replacement (not just a
-fallback) for the heuristic + gold combination. It also means we can apply
-the same pipeline to Thousand Voices without losing discrimination signal.
+| method | hotel ratio | bank ratio | hotel labels (u/a) | bank labels (u/a) | total cost |
+|---|---|---|---|---|---|
+| single_prompt | 4.60× | 5.08× | 17 / 19 | 20 / 13 | $0.83 |
+| hybrid | 4.22× | 4.07× | 15 / 18 | 22 / 12 | $0.85 |
+| cluster | **5.06×** | **7.70×** | 122 / 17 | 225 / 12 | $1.62 |
+
+Detailed scores:
+
+| method | task | in-task ± std | out-of-task ± std | separation |
+|---|---|---|---|---|
+| single_prompt | `hotel_book` | 0.1132 ± 0.0302 | 0.5203 ± 0.1658 | 0.4071 |
+| single_prompt | `bank_fraud_report` | 0.1209 ± 0.0372 | 0.6141 ± 0.0852 | 0.4932 |
+| hybrid | `hotel_book` | 0.1229 ± 0.0366 | 0.5185 ± 0.1573 | 0.3956 |
+| hybrid | `bank_fraud_report` | 0.1496 ± 0.0533 | 0.6096 ± 0.0859 | 0.4600 |
+| cluster | `hotel_book` | 0.1103 ± 0.0412 | 0.5584 ± 0.1564 | 0.4480 |
+| cluster | `bank_fraud_report` | 0.0859 ± 0.0275 | 0.6619 ± 0.0867 | 0.5760 |
+
+All three methods STRONG PASS on both tasks (no 1σ overlap), and all three
+beat the heuristic baseline.
+
+### Discussion
+
+**The cluster method gives the highest ratios but produces unwieldy
+taxonomies.** `bank_fraud_report` ends up with 225 distinct user labels —
+clear over-fragmentation, with many near-synonyms (e.g. variations of
+"report fraudulent activity" with different transaction amounts). The
+discrimination ratio is inflated partly because a finer taxonomy gives the
+trie tighter prefixes, which lowers in-task scores; but the resulting label
+set is harder to use downstream and twice as expensive.
+
+**single_prompt is the best parsimony / quality tradeoff.** It produces
+17-20 user and 12-19 agent labels per task — comparable to the gold
+`ActionLabel` granularity — at the same cost as hybrid and well under
+half the cost of cluster. Discrimination ratios (4.60× / 5.08×) clearly
+beat the heuristic baseline.
+
+**hybrid underperforms on `bank_fraud_report`.** Clustering reduces the
+input to the naming call from ~250 utterances to ~50 representatives;
+losing that contextual diversity seems to make the resulting taxonomy
+less discriminative. On `hotel_book` it is comparable to single_prompt.
+
+**Takeaway:** for Thousand Voices, use **single_prompt**. It is the
+cheapest, produces the most interpretable taxonomy, and meaningfully
+beats both the heuristic baseline and the hybrid method. The cluster
+method is preserved in the codebase for future ablation but is not
+recommended for production use.
+
+### Methodological caveat
+
+The taxonomies in all three LLM methods are bootstrapped from the same
+in-task conversations they then label. This is intentional — it mirrors
+what Thousand Voices will need (bootstrap on the corpus, then label it).
+But it does mean that part of the in-task score reduction may reflect
+taxonomy fitting rather than genuine quality. A held-out split (bootstrap
+on 50% of in-task, label the other 50% + all out-of-task) would isolate
+that effect; not yet run.
 
 ## Conclusion
 
-FuDGE is validated under both label regimes. The metric separates in-task
-from out-of-task conversations with 3-5× ratios and no 1σ overlap whether
-labels come from `gold ActionLabel + user_before_<...>` heuristic or from a
-purely LLM-driven labeling pipeline that never sees the gold labels. It is
-ready for application to label-free datasets.
+FuDGE is validated under all four label regimes (heuristic baseline +
+three LLM methods). The metric separates in-task from out-of-task
+conversations with 3-8× ratios and no 1σ overlap on both tasks. The
+single_prompt LLM method is the recommended labeling approach for
+label-free datasets like Thousand Voices.
 
 ## Next Steps
 
-1. Apply the LLM labeling pipeline + FuDGE to Thousand Voices (mental health)
+1. Apply the LLM labeling pipeline (single_prompt) + FuDGE to Thousand
+   Voices (mental health)
 2. Compare open-source vs proprietary model flows using FuDGE scores
-3. (Deferred) 3-method taxonomy ablation (single-prompt vs hybrid vs
-   per-cluster-named) — see `PROGRESS.md`
-4. (Deferred) FF1 (Flow-F1 Score) implementation
-5. (Deferred) Mann-Whitney U significance test on the discrimination
+3. (Deferred) FF1 (Flow-F1 Score) implementation
+4. (Deferred) Mann-Whitney U significance test on the discrimination
    experiment
+5. (Deferred) Held-out taxonomy split to isolate fitting effects
 

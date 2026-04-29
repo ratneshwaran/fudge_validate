@@ -174,6 +174,7 @@ def _make_config(
         cluster_k=None,
         n_samples_per_cluster=3,
         merge_threshold=0.85,
+        hybrid_reps_per_cluster=2,
         target_size_min=3,
         target_size_max=8,
         max_prompt_chars=10_000,
@@ -216,7 +217,7 @@ def test_taxonomy_file_structure(tmp_path, embedder, conversations, monkeypatch)
     counter = CallCounter()
     summary = _run(cfg, conversations, embedder, counter, monkeypatch)
 
-    taxonomy_path = cfg.out_dir / "smoke_task" / "taxonomy.json"
+    taxonomy_path = cfg.out_dir / "smoke_task" / cfg.taxonomy_method / "taxonomy.json"
     assert taxonomy_path.exists(), "taxonomy.json was not written"
     with open(taxonomy_path, encoding="utf-8") as f:
         tax = json.load(f)
@@ -238,7 +239,7 @@ def test_per_dialogue_files_one_label_per_utterance(tmp_path, embedder, conversa
     cfg = _make_config("whole", tmp_path)
     _run(cfg, conversations, embedder, CallCounter(), monkeypatch)
 
-    method_dir = cfg.out_dir / "smoke_task" / "whole"
+    method_dir = cfg.out_dir / "smoke_task" / cfg.taxonomy_method / "whole"
     assert method_dir.exists()
 
     for conv in conversations:
@@ -258,7 +259,7 @@ def test_per_dialogue_files_one_label_per_utterance_window(tmp_path, embedder, c
     cfg = _make_config("window", tmp_path)
     _run(cfg, conversations, embedder, CallCounter(), monkeypatch)
 
-    method_dir = cfg.out_dir / "smoke_task" / "window"
+    method_dir = cfg.out_dir / "smoke_task" / cfg.taxonomy_method / "window"
     for conv in conversations:
         with open(method_dir / f"{conv.dialogue_id}.json", encoding="utf-8") as f:
             payload = json.load(f)
@@ -269,10 +270,22 @@ def test_cluster_method_still_works(tmp_path, embedder, conversations, monkeypat
     """Cluster method is preserved for the planned ablation; cover its happy path."""
     cfg = _make_config("whole", tmp_path, taxonomy_method="cluster")
     _run(cfg, conversations, embedder, CallCounter(), monkeypatch)
-    tax_path = cfg.out_dir / "smoke_task" / "taxonomy.json"
+    tax_path = cfg.out_dir / "smoke_task" / "cluster" / "taxonomy.json"
     with open(tax_path, encoding="utf-8") as f:
         tax = json.load(f)
     assert tax["user"] and tax["agent"]
+
+
+def test_hybrid_method_works(tmp_path, embedder, conversations, monkeypatch):
+    """Hybrid: cluster + single LLM call on representatives."""
+    cfg = _make_config("whole", tmp_path, taxonomy_method="hybrid")
+    _run(cfg, conversations, embedder, CallCounter(), monkeypatch)
+    tax_path = cfg.out_dir / "smoke_task" / "hybrid" / "taxonomy.json"
+    with open(tax_path, encoding="utf-8") as f:
+        tax = json.load(f)
+    assert tax["user"] and tax["agent"]
+    # Hybrid uses unified_taxonomy schema like single_prompt — labels follow that fake's pattern.
+    assert any("greet" in t["label"] for t in tax["user"])
 
 
 def test_cache_prevents_second_api_call(tmp_path, embedder, conversations, monkeypatch):

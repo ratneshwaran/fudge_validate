@@ -611,6 +611,19 @@ def _sample_for_single_prompt(
     return [utterances[i] for i in indices if i < len(utterances)]
 
 
+def _dedup_taxonomy(items: list[dict]) -> list[dict]:
+    """Drop entries whose label has already been seen (defensive — prompt requires uniqueness)."""
+    seen: set[str] = set()
+    out: list[dict] = []
+    for it in items:
+        lbl = it["label"]
+        if lbl in seen:
+            continue
+        seen.add(lbl)
+        out.append({"label": lbl, "description": it["description"]})
+    return out
+
+
 async def bootstrap_taxonomy_single_prompt(
     actor: str,
     utterances: list[str],
@@ -630,17 +643,40 @@ async def bootstrap_taxonomy_single_prompt(
         schema_name="unified_taxonomy",
         schema=SINGLE_PROMPT_TAXONOMY_SCHEMA,
     )
-    items = parsed.get("taxonomy", [])
-    # Final dedup on label collisions defensively (the prompt asks for unique labels).
-    seen: set[str] = set()
-    out: list[dict] = []
-    for it in items:
-        lbl = it["label"]
-        if lbl in seen:
-            continue
-        seen.add(lbl)
-        out.append({"label": lbl, "description": it["description"]})
-    return out
+    return _dedup_taxonomy(parsed.get("taxonomy", []))
+
+
+async def bootstrap_taxonomy_hybrid(
+    actor: str,
+    utterances: list[str],
+    client: LLMClient,
+    embedder: EmbeddingCache,
+    cluster_algo: str,
+    threshold: float,
+    k: int | None,
+    n_reps_per_cluster: int,
+    target_size_min: int,
+    target_size_max: int,
+) -> list[dict]:
+    """Cluster utterances cheaply, then send 1-2 representatives per cluster
+    in ONE LLM call asking for a unified taxonomy.
+
+    Long-tail coverage from clustering + no synonyms from single-call naming.
+    """
+    if not utterances:
+        return []
+    cluster_labels, embeddings = cluster_texts(utterances, embedder, cluster_algo, threshold, k)
+    reps_dict = cluster_representatives(utterances, cluster_labels, embeddings, n_reps_per_cluster)
+    # Flatten reps in deterministic cluster_id order so the cache key is stable.
+    flat_reps = [t for cid in sorted(reps_dict.keys()) for t in reps_dict[cid]]
+    messages = _single_prompt_messages(actor, flat_reps, target_size_min, target_size_max)
+    parsed = await client.call(
+        stage=f"taxonomy.hybrid.{actor}",
+        messages=messages,
+        schema_name="unified_taxonomy",
+        schema=SINGLE_PROMPT_TAXONOMY_SCHEMA,
+    )
+    return _dedup_taxonomy(parsed.get("taxonomy", []))
 
 
 # ---------------------------------------------------------------------------
@@ -894,14 +930,16 @@ class PipelineConfig:
     model: str
     window_size: int
     concurrency: int
-    taxonomy_method: str  # 'single_prompt' | 'cluster'
-    # Cluster-method knobs (ignored when taxonomy_method='single_prompt')
+    taxonomy_method: str  # 'single_prompt' | 'hybrid' | 'cluster'
+    # Cluster-method knobs (used by 'cluster' and 'hybrid')
     cluster_algo: str
     cluster_threshold: float
     cluster_k: int | None
     n_samples_per_cluster: int
     merge_threshold: float
-    # Single-prompt knobs (ignored when taxonomy_method='cluster')
+    # Hybrid-only
+    hybrid_reps_per_cluster: int
+    # Single-prompt and hybrid LLM-call knobs
     target_size_min: int
     target_size_max: int
     max_prompt_chars: int
@@ -934,7 +972,9 @@ async def run_pipeline(
     client: LLMClient,
 ) -> dict:
     """Returns a small summary dict for the smoke test / CLI."""
-    out_dir = cfg.out_dir / cfg.task
+    # Layout: <out>/<task>/<taxonomy_method>/taxonomy.json
+    #         <out>/<task>/<taxonomy_method>/<label_method>/<dialogue_id>.json
+    out_dir = cfg.out_dir / cfg.task / cfg.taxonomy_method
     out_dir.mkdir(parents=True, exist_ok=True)
     method_dir = out_dir / cfg.method
     method_dir.mkdir(parents=True, exist_ok=True)
@@ -962,6 +1002,21 @@ async def run_pipeline(
                 bootstrap_taxonomy_single_prompt(
                     "agent", agent_texts, client,
                     cfg.target_size_min, cfg.target_size_max, cfg.max_prompt_chars,
+                ),
+            )
+        elif cfg.taxonomy_method == "hybrid":
+            user_taxonomy, agent_taxonomy = await asyncio.gather(
+                bootstrap_taxonomy_hybrid(
+                    "user", user_texts, client, embedder,
+                    cfg.cluster_algo, cfg.cluster_threshold, cfg.cluster_k,
+                    cfg.hybrid_reps_per_cluster,
+                    cfg.target_size_min, cfg.target_size_max,
+                ),
+                bootstrap_taxonomy_hybrid(
+                    "agent", agent_texts, client, embedder,
+                    cfg.cluster_algo, cfg.cluster_threshold, cfg.cluster_k,
+                    cfg.hybrid_reps_per_cluster,
+                    cfg.target_size_min, cfg.target_size_max,
                 ),
             )
         elif cfg.taxonomy_method == "cluster":
@@ -1058,15 +1113,18 @@ def _build_argparser() -> argparse.ArgumentParser:
     p.add_argument("--concurrency", type=int, default=10)
     p.add_argument(
         "--taxonomy-method",
-        choices=["single_prompt", "cluster"],
+        choices=["single_prompt", "hybrid", "cluster"],
         default="single_prompt",
         help="single_prompt (default): one LLM call returns the unified taxonomy. "
+        "hybrid: cluster cheaply, send 1-2 reps per cluster in one LLM call. "
         "cluster: SBERT-cluster + per-cluster naming + post-merge.",
     )
+    p.add_argument("--hybrid-reps-per-cluster", type=int, default=2,
+                   help="Representatives per cluster for the hybrid method")
     p.add_argument("--target-size-min", type=int, default=12,
-                   help="Min taxonomy size hint (single_prompt method)")
+                   help="Min taxonomy size hint (single_prompt and hybrid methods)")
     p.add_argument("--target-size-max", type=int, default=30,
-                   help="Max taxonomy size hint (single_prompt method)")
+                   help="Max taxonomy size hint (single_prompt and hybrid methods)")
     p.add_argument("--max-prompt-chars", type=int, default=120_000,
                    help="Soft cap on the bootstrap prompt size; uniformly samples "
                    "utterances if exceeded (single_prompt method)")
@@ -1091,10 +1149,10 @@ def _build_argparser() -> argparse.ArgumentParser:
     return p
 
 
-def _make_log_path(log_dir: Path, task: str, method: str) -> Path:
+def _make_log_path(log_dir: Path, task: str, taxonomy_method: str, label_method: str) -> Path:
     log_dir.mkdir(parents=True, exist_ok=True)
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    return log_dir / f"llm_label_{task}_{method}_{ts}.jsonl"
+    return log_dir / f"llm_label_{task}_{taxonomy_method}_{label_method}_{ts}.jsonl"
 
 
 async def _async_main(args: argparse.Namespace) -> None:
@@ -1110,6 +1168,7 @@ async def _async_main(args: argparse.Namespace) -> None:
         cluster_k=args.cluster_k,
         n_samples_per_cluster=args.centroid_samples,
         merge_threshold=args.merge_threshold,
+        hybrid_reps_per_cluster=args.hybrid_reps_per_cluster,
         target_size_min=args.target_size_min,
         target_size_max=args.target_size_max,
         max_prompt_chars=args.max_prompt_chars,
@@ -1119,7 +1178,7 @@ async def _async_main(args: argparse.Namespace) -> None:
         star_dir=Path(args.star_dir),
         out_dir=Path(args.out_dir),
         cache_dir=Path(args.cache_dir),
-        log_path=_make_log_path(Path(args.log_dir), args.task, args.method),
+        log_path=_make_log_path(Path(args.log_dir), args.task, args.taxonomy_method, args.method),
     )
 
     convs = load_star_for_task(str(cfg.star_dir), cfg.task)
