@@ -337,104 +337,158 @@ taxonomy fitting rather than genuine quality. A held-out split (bootstrap
 on 50% of in-task, label the other 50% + all out-of-task) would isolate
 that effect; not yet run.
 
-## Significance, bootstrap CI, and held-out flow split (2026-04-30)
+## Significance, multi-split held-out, and paired regime tests (2026-04-30)
 
-The "STRONG PASS" label above is based only on a 1σ-overlap check, which
-is a weak claim for a paper. We add three quantitative checks per
-(task, regime) cell:
+The "STRONG PASS" label above only checks 1σ-overlap, and an earlier
+draft of this section made an equivalence claim from CI-overlap which
+is not a valid inference. The corrected analysis has three pieces:
 
-1. **Mann-Whitney U** (one-sided, H1: in-task scores stochastically less
-   than out-of-task) with rank-biserial effect size *r*.
-2. **Bootstrap 95% CI** on the discrimination ratio
-   (mean(neg) / mean(pos)), 2000 resamples per cell.
-3. **Held-out flow split** — the in-distribution evaluation above samples
-   positives from the *same conversations* the prefix-trie flow was built
-   from, so positives' exact intent paths are guaranteed to appear in the
-   trie. The held-out variant builds the flow from 50% of in-task
-   conversations and tests on the other 50% (no positive in the trie's
-   training set). This separates "discrimination" from "memorization."
+1. **In-distribution** — one fixed flow per regime built from all
+   in-task conversations; per-cell Mann-Whitney U + a percentile
+   bootstrap CI on the ratio. This bootstrap captures sampling variance
+   *given a fixed flow*; it does **not** capture variance from how the
+   flow was trained, so it understates uncertainty for paper-grade
+   claims about the method.
+2. **Held-out, 10 random 50/50 splits per task.** For each split we
+   rebuild the flow from the train half (separately for each regime's
+   labels) and score positives (test half) + negatives (out-of-task
+   sample). We report mean ± std of the ratio across the 10 splits.
+   Variance across splits is the right uncertainty for "what does this
+   method achieve on unseen in-task conversations."
+3. **Between-regime paired Wilcoxon tests** on per-conversation held-out
+   scores, averaged across the 10 splits where each conversation
+   appeared as a positive. This is the proper test for "is regime A
+   different from regime B?" — overlapping marginal CIs do not imply
+   equivalence.
 
-### In-distribution (matches the original setup above)
+### In-distribution (one fixed flow per regime)
 
-| task | regime | ratio | 95% CI | U | p-value | r |
+| task | regime | ratio | 95% CI | U | p (1-sided) | r |
 |---|---|---|---|---|---|---|
-| `hotel_book` | heuristic | 3.00× | [2.68, 3.34] | 90 | 2.92e-26 | 0.9712 |
-| `hotel_book` | single_prompt + whole | 4.60× | [4.19, 5.08] | 0 | 1.00e-27 | 1.0000 |
-| `hotel_book` | single_prompt + chunk | 4.50× | [4.12, 4.95] | 0 | 1.00e-27 | 1.0000 |
-| `hotel_book` | hybrid + whole | 4.22× | [3.85, 4.66] | 0 | 1.00e-27 | 1.0000 |
-| `hotel_book` | cluster + whole | 5.06× | [4.58, 5.62] | 0 | 1.00e-27 | 1.0000 |
-| `bank_fraud_report` | heuristic | 3.69× | [3.41, 3.99] | 0 | 2.13e-27 | 1.0000 |
-| `bank_fraud_report` | single_prompt + whole | 5.08× | [4.71, 5.46] | 0 | 2.13e-27 | 1.0000 |
-| `bank_fraud_report` | single_prompt + chunk | 5.14× | [4.81, 5.50] | 0 | 2.13e-27 | 1.0000 |
-| `bank_fraud_report` | hybrid + whole | 4.07× | [3.75, 4.42] | 1 | 2.21e-27 | 0.9997 |
-| `bank_fraud_report` | cluster + whole | 7.70× | [7.14, 8.31] | 0 | 2.13e-27 | 1.0000 |
+| `hotel_book` | heuristic | 3.01× | [2.67, 3.33] | 105 | 5.08e-26 | 0.9664 |
+| `hotel_book` | single_prompt + whole | 4.04× | [3.52, 4.53] | 61 | 9.96e-27 | 0.9805 |
+| `hotel_book` | single_prompt + chunk | 3.98× | [3.49, 4.46] | 61 | 9.96e-27 | 0.9805 |
+| `hotel_book` | hybrid + whole | 3.80× | [3.35, 4.24] | 47 | 5.90e-27 | 0.9849 |
+| `hotel_book` | cluster + whole | 4.46× | [3.92, 5.11] | 32 | 3.36e-27 | 0.9897 |
+| `bank_fraud_report` | heuristic | 3.53× | [3.25, 3.81] | 10 | 3.13e-27 | 0.9967 |
+| `bank_fraud_report` | single_prompt + whole | 4.99× | [4.64, 5.34] | 0 | 2.13e-27 | 1.0000 |
+| `bank_fraud_report` | single_prompt + chunk | 5.13× | [4.81, 5.44] | 0 | 2.13e-27 | 1.0000 |
+| `bank_fraud_report` | hybrid + whole | 3.99× | [3.63, 4.34] | 6 | 2.68e-27 | 0.9980 |
+| `bank_fraud_report` | cluster + whole | 7.78× | [7.23, 8.35] | 0 | 2.13e-27 | 1.0000 |
 
-(p-values at 1.00e-27 are at scipy's asymptotic floor for n=79 with U=0 —
-read these as "p < 1e-25" rather than the literal value.)
+(p-values at 1e-27 are at scipy's asymptotic floor for n=79 with U=0 —
+read these as "p < 1e-25" rather than the literal value. RNG was
+upgraded from `np.random.seed` to `np.random.default_rng` between this
+run and the earlier draft, which slightly perturbed the in-distribution
+numbers; the qualitative ordering is unchanged.)
 
-### Held-out flow split (flow built from 50% in-task, tested on the other 50%)
+### Held-out, 10 random 50/50 splits (flow rebuilt each split)
 
-| task | regime | ratio | 95% CI | U | p-value | r |
+| task | regime | ratio mean ± std | range across splits | pooled p (1-sided) | r |
+|---|---|---|---|---|---|
+| `hotel_book` | heuristic | 1.77× ± 0.07 | [1.66, 1.88] | 1.59e-72 | 0.9048 |
+| `hotel_book` | single_prompt + whole | 1.84× ± 0.07 | [1.74, 1.95] | 4.05e-73 | 0.9086 |
+| `hotel_book` | single_prompt + chunk | 1.85× ± 0.07 | [1.76, 1.96] | 1.00e-73 | 0.9125 |
+| `hotel_book` | hybrid + whole | 1.88× ± 0.07 | [1.77, 2.00] | 7.95e-74 | 0.9131 |
+| `hotel_book` | cluster + whole | 1.76× ± 0.06 | [1.64, 1.84] | 2.34e-72 | 0.9037 |
+| `bank_fraud_report` | heuristic | 2.07× ± 0.09 | [1.90, 2.20] | 5.53e-78 | 0.9478 |
+| `bank_fraud_report` | single_prompt + whole | 2.16× ± 0.09 | [2.01, 2.34] | 2.60e-80 | 0.9622 |
+| `bank_fraud_report` | single_prompt + chunk | 2.16× ± 0.09 | [2.02, 2.30] | 2.35e-80 | 0.9625 |
+| `bank_fraud_report` | hybrid + whole | 2.12× ± 0.07 | [2.02, 2.26] | 3.75e-81 | 0.9674 |
+| `bank_fraud_report` | cluster + whole | 2.01× ± 0.08 | [1.89, 2.15] | 5.32e-80 | 0.9603 |
+
+Variance across splits is small (≤ 0.09) — the held-out ratio is a
+stable estimate, not a single-split artifact. Every cell remains highly
+significant (pooled p < 1e-72, rank-biserial r ≥ 0.90).
+
+### Between-regime paired comparisons (held-out per-conv averaged scores)
+
+For each conversation we average its score across the 10 splits where
+it appeared as a positive, giving one paired score per regime per
+conversation. Wilcoxon signed-rank on the paired differences A − B.
+Median Δ < 0 means regime A scores in-task conversations *lower* than
+regime B (better fit to the trie).
+
+| task | A | B | n | median Δ (A − B) | p two-sided | p (A < B) |
 |---|---|---|---|---|---|---|
-| `hotel_book` | heuristic | 1.71× | [1.57, 1.88] | 396 | 1.36e-21 | 0.8731 |
-| `hotel_book` | single_prompt + whole | 1.81× | [1.65, 2.00] | 307 | 6.72e-23 | 0.9016 |
-| `hotel_book` | single_prompt + chunk | 1.82× | [1.66, 2.01] | 270 | 1.87e-23 | 0.9135 |
-| `hotel_book` | hybrid + whole | 1.84× | [1.67, 2.04] | 353 | 3.22e-22 | 0.8869 |
-| `hotel_book` | cluster + whole | 1.71× | [1.58, 1.85] | 287 | 3.37e-23 | 0.9080 |
-| `bank_fraud_report` | heuristic | 1.82× | [1.49, 2.21] | 272 | 4.79e-23 | 0.9106 |
-| `bank_fraud_report` | single_prompt + whole | 1.89× | [1.55, 2.32] | 300 | 1.28e-22 | 0.9014 |
-| `bank_fraud_report` | single_prompt + chunk | 1.88× | [1.53, 2.30] | 309 | 1.74e-22 | 0.8984 |
-| `bank_fraud_report` | hybrid + whole | 1.84× | [1.51, 2.22] | 286 | 7.83e-23 | 0.9060 |
-| `bank_fraud_report` | cluster + whole | 1.77× | [1.47, 2.11] | 285 | 7.56e-23 | 0.9063 |
+| `hotel_book` | single_prompt + whole | heuristic | 158 | −0.0042 | 0.2181 | 0.1090 |
+| `hotel_book` | single_prompt + chunk | heuristic | 158 | −0.0044 | 0.1148 | 0.0574 |
+| `hotel_book` | hybrid + whole | heuristic | 158 | −0.0164 | 2.45e-06 | 1.22e-06 |
+| `hotel_book` | cluster + whole | heuristic | 158 | +0.0308 | 2.76e-15 | (1.0) |
+| `bank_fraud_report` | single_prompt + whole | heuristic | 155 | +0.0061 | 0.1499 | 0.9251 |
+| `bank_fraud_report` | single_prompt + chunk | heuristic | 155 | +0.0065 | 0.4552 | 0.7724 |
+| `bank_fraud_report` | hybrid + whole | heuristic | 155 | +0.0113 | 0.0059 | 0.9971 |
+| `bank_fraud_report` | cluster + whole | heuristic | 155 | +0.0459 | 4.43e-20 | (1.0) |
 
-### What changes under held-out
+What this says, regime by regime:
 
-Two big shifts and one thing that holds up:
+- **single_prompt** (whole or chunk) is **not significantly different**
+  from the heuristic baseline on either task (p > 0.10 two-sided in all
+  four cells). This does *not* prove equivalence — that would require a
+  pre-specified equivalence margin and a TOST-style test — but it does
+  refute the earlier "LLM beats heuristic" framing. The fair conclusion
+  is "no detectable difference at α = 0.05 between LLM single_prompt
+  labels and gold + heuristic labels on held-out FuDGE scores." For a
+  label-free dataset (Thousand Voices), this is the result we needed:
+  switching to LLM labels does not visibly degrade discrimination.
 
-1. **Ratios collapse from 3-7.7× to 1.7-1.9× across the board.** The
-   bulk of the in-distribution discrimination was the prefix-trie
-   memorizing the positives' exact intent paths. Under fair evaluation,
-   FuDGE produces a real but much smaller separation.
-2. **The LLM-vs-heuristic gap dissolves.** Held-out heuristic ratios
-   (1.71× / 1.82×) and held-out LLM ratios (1.81–1.89× / 1.77–1.89×) are
-   indistinguishable — their bootstrap CIs overlap heavily. The
-   in-distribution claim that "LLM labels improve over heuristic" was
-   driven by fitting, not better intent abstraction. Both label regimes
-   converge to roughly the same generalization once the trie can no
-   longer memorize.
-3. **Significance survives.** Every held-out cell still has p < 1e-21
-   and rank-biserial r ≥ 0.87. FuDGE clearly separates in-task from
-   out-of-task even on held-out positives — the metric works, the
-   in-distribution headline numbers were just inflated.
+- **hybrid** is significantly better than heuristic on `hotel_book`
+  (p = 2.5e-06, in-task scores lower) and significantly worse on
+  `bank_fraud_report` (p = 0.006). Mixed and small in magnitude;
+  inconsistent across tasks.
 
-This is the methodologically honest version of the paper's story:
+- **cluster** is **significantly worse than heuristic on both tasks**
+  in held-out (p = 2.8e-15 / 4.4e-20). Median Δ = +0.03 hotel /
+  +0.046 bank — the over-fragmented cluster taxonomy (122-225 user
+  labels) raises in-task scores under fair evaluation. This is the
+  *opposite* of the in-distribution finding where cluster looked best.
 
-> FuDGE is a valid discrimination metric for dialogue flows
-> (held-out p < 1e-21, r ≥ 0.87, ratio ~1.8×). The choice of label
-> regime — heuristic vs. LLM-generated taxonomies — does not
-> meaningfully affect generalization on STAR. LLM labeling is therefore
-> a viable replacement for gold annotations on label-free datasets like
-> Thousand Voices, with no expected discrimination penalty.
+### Why the cluster method flips
 
-Reproduce with `python experiments/significance.py --also-held-out`.
+In-distribution, cluster's 225 user labels memorize bank_fraud_report
+verbatim — every positive's intent path is in the trie because the trie
+was built from those exact labelings. Under held-out, the test
+positives are labeled with the same large taxonomy but their specific
+intent sequences may not appear in the trained-on half's trie, and the
+fragmented buckets generalize poorly. The heuristic's smaller, more
+abstract label set (~21 user / ~14 agent) covers more conversations
+into the same buckets — better generalization.
+
+This is a strong cautionary finding: **the in-distribution metric
+severely misranks methods.** Cluster appears to be the best regime
+in-distribution and the worst regime held-out. Methods papers that
+report only the in-distribution number can choose the regime that
+overfits hardest.
+
+Reproduce with `python experiments/significance.py --n-splits 10`.
 
 ## Conclusion
 
-FuDGE is a valid discrimination metric for dialogue flows. The honest
-held-out result is **ratio ~1.8×, p < 1e-21, rank-biserial r ≥ 0.87**
-on both tasks. The headline 3-8× ratios from the in-distribution
-evaluation were inflated by the prefix-trie memorizing positive
-conversations during flow construction.
+FuDGE is a valid discrimination metric for dialogue flows. Under
+multi-split held-out evaluation it produces **ratio ~1.77-1.88×
+(hotel) / ~2.01-2.16× (bank), pooled p < 1e-72, rank-biserial r ≥ 0.90
+on both tasks across 10 random 50/50 splits**. Variance across splits
+is small (≤ 0.09×), so the held-out estimate is stable. The headline
+3-8× ratios from in-distribution evaluation were inflated by the
+prefix-trie memorizing the positive conversations during flow
+construction.
 
-The four label regimes (heuristic baseline + three LLM methods) are
-**indistinguishable** under held-out evaluation; their bootstrap CIs
-overlap. This is good news for label-free datasets: LLM labeling is a
-drop-in replacement for gold annotations + heuristics on STAR with no
-expected loss in discrimination. The single_prompt method is the
-recommended choice for Thousand Voices — not because it beats the
-others on STAR (it doesn't, fairly), but because it has the smallest
-taxonomies, lowest cost, and cleanest interpretability among the
-LLM-driven options.
+Paired Wilcoxon tests on per-conversation held-out scores show:
+
+- **single_prompt LLM labels and the gold/heuristic baseline are not
+  significantly different** on either task (p > 0.10 two-sided). This
+  is the strongest defensible claim: switching to LLM labels does not
+  visibly degrade FuDGE discrimination, which is what we needed for
+  label-free datasets like Thousand Voices.
+- **cluster labels are significantly worse than heuristic in held-out**
+  (p ≤ 2.8e-15 on both tasks) — the opposite of the in-distribution
+  finding. Over-fragmented taxonomies overfit but do not generalize.
+- **hybrid is mixed** (slightly better on hotel, slightly worse on
+  bank); not a clean winner.
+
+**Recommendation for Thousand Voices: use single_prompt** — no
+detectable held-out penalty vs. gold+heuristic, smallest taxonomies,
+lowest cost, cleanest interpretability. Avoid cluster.
 
 ## Next Steps
 
