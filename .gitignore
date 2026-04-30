@@ -8,3 +8,7 @@ data/
 .env
 .llm_cache/
 logs/
+.claude/
+*.pdf
+NOTEBOOK_LM.md
+supervisor_update.tex
