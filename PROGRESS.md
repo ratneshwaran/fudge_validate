@@ -197,8 +197,8 @@ pipeline:
 - ~~Statistical significance test (Mann–Whitney U)~~ — DONE 2026-04-30.
 - ~~Bootstrap 95% CI on the discrimination ratio~~ — DONE 2026-04-30.
 - ~~Held-out flow split~~ — DONE 2026-04-30 (single seed) and HARDENED
-  2026-04-30 with 10-split + paired Wilcoxon after a Codex round-3
-  review flagged the single-split + CI-overlap issues. **Headline
+  2026-04-30 with 10-split + paired Wilcoxon after an adversarial
+  round-3 review flagged the single-split + CI-overlap issues. **Headline
   finding: ratios collapse from 3-7.7× (in-distribution) to 1.77-2.16×
   (held-out, mean ± 0.07-0.09 across splits)**. Single_prompt LLM and
   heuristic are not significantly different on held-out (p > 0.10

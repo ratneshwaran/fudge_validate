@@ -5,6 +5,7 @@
 \usepackage{lmodern}
 \usepackage{microtype}
 \usepackage{booktabs}
+\usepackage{multirow}
 \usepackage{amsmath}
 \usepackage{forest}
 \usepackage{url}
@@ -135,7 +136,91 @@ This produces a DAG that captures all observed conversation patterns.
 
 Both tasks show clear discrimination, with score ratios of $3.0\times$ and $3.7\times$, and no distributional overlap at $1\sigma$. In-task scores are approximately twice those reported in the paper, which is expected because the prefix-trie construction is likely noisier than ALG1. Out-of-task scores are close to those reported in the paper.
 
-\textbf{Conclusion.} FuDGE appears to be validated as an effective distance metric for dialogue flows.
+\textbf{Conclusion (Phase~1).} FuDGE separates in-task from out-of-task dialogues with no $1\sigma$ overlap on either task, validating it as a discrimination metric on labelled data.
+
+\section{LLM-based intent labelling (Phases 2--3)}
+
+\textbf{Motivation.} STAR has gold \texttt{ActionLabel} on agent turns only; user turns were filled in with the heuristic above. The Thousand Voices dataset has \emph{no} labels at all. To run FuDGE there we need a labelling pipeline that does not depend on either signal.
+
+\textbf{Pipeline (\texttt{scripts/llm\_label\_star.py}).} Two-stage, async OpenAI (GPT-5-mini) with on-disk cache, retry, and cost tracking.
+\begin{itemize}
+    \item \textbf{Stage 1 -- taxonomy bootstrap.} Three variants compared:
+    \begin{itemize}
+        \item \texttt{single\_prompt}: send all unique utterances for one actor in one call; the model returns a unified taxonomy of 12--30 intents.
+        \item \texttt{hybrid}: SBERT-cluster cheaply, send 1--2 representatives per cluster in \emph{one} naming call. Long-tail coverage from clustering, no synonyms from single-call naming.
+        \item \texttt{cluster}: per-cluster naming + post-merge by label-embedding similarity.
+    \end{itemize}
+    \item \textbf{Stage 2 -- per-utterance labelling.} Two variants run end-to-end: \texttt{whole} (full dialogue + both taxonomies in one call) and \texttt{chunk} (overlapping windows of 5 utterances, stride 4, last-chunk-wins). Off-taxonomy returns fall back to the nearest valid same-actor label by SBERT cosine similarity.
+\end{itemize}
+Output is wired into FuDGE via \texttt{data\_loader.load\_llm\_labels} + \texttt{build\_flow\_from\_conversations(label\_source=...)}; the existing flow construction is untouched.
+
+\section{Phase~4 -- discrimination with LLM labels}
+
+In-distribution (one fixed flow built from all in-task conversations per regime), discrimination ratios (out-of-task mean / in-task mean):
+
+\begin{center}
+\begin{tabular}{lcc}
+\toprule
+Regime & \texttt{hotel\_book} & \texttt{bank\_fraud\_report} \\
+\midrule
+heuristic (gold + \texttt{user\_before\_*}) & $3.01\times$ & $3.53\times$ \\
+LLM single\_prompt + whole & $4.04\times$ & $4.99\times$ \\
+LLM single\_prompt + chunk & $3.98\times$ & $5.13\times$ \\
+LLM hybrid + whole         & $3.80\times$ & $3.99\times$ \\
+LLM cluster + whole        & $\mathbf{4.46\times}$ & $\mathbf{7.78\times}$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+All cells are highly significant under per-cell Mann--Whitney~U ($p < 1\mathrm{e}{-25}$, $r \geq 0.97$). Total Stage~2 labelling cost across both tasks: roughly \$0.83 (whole, single\_prompt) to \$1.62 (cluster).
+
+\section{Held-out evaluation (10 random 50/50 splits)}
+
+In-distribution metrics conflate two effects: (i)~genuine signal and (ii)~the prefix-trie memorising whichever conversations it was built from. To separate them, for each task we draw 10 random 50/50 splits, rebuild the flow from the train half (separately per regime), and score positives (test half) and negatives (out-of-task) with the held-out flow.
+
+\begin{center}
+\begin{tabular}{llcc}
+\toprule
+Task & Regime & Ratio mean $\pm$ std & Range \\
+\midrule
+\multirow{4}{*}{\texttt{hotel\_book}}
+  & heuristic            & $1.77 \pm 0.07$ & $[1.66,\,1.88]$ \\
+  & LLM single\_prompt   & $1.84 \pm 0.07$ & $[1.74,\,1.95]$ \\
+  & LLM hybrid           & $1.88 \pm 0.07$ & $[1.77,\,2.00]$ \\
+  & LLM cluster          & $1.76 \pm 0.06$ & $[1.64,\,1.84]$ \\
+\midrule
+\multirow{4}{*}{\texttt{bank\_fraud\_report}}
+  & heuristic            & $2.07 \pm 0.09$ & $[1.90,\,2.20]$ \\
+  & LLM single\_prompt   & $2.16 \pm 0.09$ & $[2.01,\,2.34]$ \\
+  & LLM hybrid           & $2.12 \pm 0.07$ & $[2.02,\,2.26]$ \\
+  & LLM cluster          & $2.01 \pm 0.08$ & $[1.89,\,2.15]$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Variance across splits is small ($\leq 0.09$) -- the held-out estimate is stable, not a single-split artefact. Every cell remains highly significant under pooled Mann--Whitney U ($p < 1\mathrm{e}{-72}$, $r \geq 0.90$).
+
+\textbf{Between-regime paired Wilcoxon} on per-conversation held-out scores averaged across the splits each conversation appears in as a positive:
+
+\begin{center}
+\begin{tabular}{llrrl}
+\toprule
+Task & Regime $A$ vs heuristic & median $\Delta$ & $p$ (two-sided) & Verdict \\
+\midrule
+\multirow{3}{*}{\texttt{hotel\_book}}
+  & LLM single\_prompt & $-0.0042$ & $0.218$              & n.s. \\
+  & LLM hybrid         & $-0.0164$ & $2.5 \cdot 10^{-6}$  & sig.\ better \\
+  & LLM cluster        & $+0.0308$ & $2.8 \cdot 10^{-15}$ & sig.\ \textbf{worse} \\
+\midrule
+\multirow{3}{*}{\texttt{bank\_fraud\_report}}
+  & LLM single\_prompt & $+0.0061$ & $0.150$              & n.s. \\
+  & LLM hybrid         & $+0.0113$ & $0.006$              & sig.\ worse \\
+  & LLM cluster        & $+0.0459$ & $4.4 \cdot 10^{-20}$ & sig.\ \textbf{worse} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{Headline finding.} \emph{In-distribution metrics misrank labelling methods.} Cluster looks \emph{best} in-distribution ($4.46\times$ / $7.78\times$) and is \emph{significantly worst} on held-out paired tests on both tasks. Its over-fragmented taxonomy (122--225 user labels) memorises the in-task corpus but does not generalise. The smaller taxonomies (single\_prompt, hybrid, heuristic; 28--41 total labels each) generalise comparably. \texttt{single\_prompt} is not significantly different from gold + heuristic on either task ($p > 0.10$ two-sided), which is the result needed to apply the pipeline to label-free datasets without an expected discrimination penalty.
 
 \section{Known differences from paper}
 
@@ -143,16 +228,17 @@ Both tasks show clear discrimination, with score ratios of $3.0\times$ and $3.7\
     \item Flow construction: prefix-trie (ours) versus ALG1 (paper, proprietary)
     \item Dataset size: 158/156 conversations versus the paper's 145/180
     \item Sentence-BERT model: the paper does not specify the exact model used
-    \item No statistical significance test was run, such as Mann--Whitney U; only $1\sigma$ separation was checked
+    \item Phase~1 reported $1\sigma$ separation only; Phases~2--4 add Mann--Whitney U, bootstrap CI, multi-split held-out, and paired Wilcoxon
 \end{itemize}
 
 \section{Next steps}
 
 \begin{enumerate}
-    \item Apply FuDGE to Thousand Voices, a mental health dataset. This requires LLM-based intent annotation because no intent labels currently exist.
-    \item Implement an LLM-as-a-judge baseline on STAR for comparison.
-    \item Implement FF1 (Flow-F1 Score) for flow quality evaluation.
-\end{enumerate}
+    \item \textbf{Phase 5 -- Thousand Voices.} Apply LLM \texttt{single\_prompt} + chunked Stage~2 (TV dialogues are 30--100+ turns) to the trauma-therapy corpus. Discrimination question: trauma type (8 classes, balanced).
+    \item LLM-as-a-judge baseline on STAR for comparison against FuDGE.
+    \item FF1 (Flow-F1 Score) for flow-quality evaluation.
+    \item Held-out \emph{taxonomy} bootstrap split (orthogonal to the held-out flow split): bootstrap on 50\% of in-task, label the other 50\% with that frozen taxonomy.
+\end{enumerate>
 
 \section{Clarifying questions}
 
