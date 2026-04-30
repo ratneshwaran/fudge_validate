@@ -337,13 +337,46 @@ taxonomy fitting rather than genuine quality. A held-out split (bootstrap
 on 50% of in-task, label the other 50% + all out-of-task) would isolate
 that effect; not yet run.
 
+## Significance test (Mann-Whitney U, 2026-04-30)
+
+The "STRONG PASS" label above is based only on a 1σ-overlap check, which
+is a weak claim. To quantify, we ran a one-sided Mann-Whitney U test on
+each (task, regime) cell — H1: in-task scores stochastically less than
+out-of-task scores. We also report the rank-biserial correlation r as
+the effect size (r = 1 means every positive ranks below every negative).
+
+| task | regime | n (pos/neg) | U | p-value | rank-biserial r |
+|---|---|---|---|---|---|
+| `hotel_book` | heuristic | 79/79 | 90 | 2.92e-26 | 0.9712 |
+| `hotel_book` | single_prompt + whole | 79/79 | 0 | 1.00e-27 | 1.0000 |
+| `hotel_book` | single_prompt + chunk | 79/79 | 0 | 1.00e-27 | 1.0000 |
+| `hotel_book` | hybrid + whole | 79/79 | 0 | 1.00e-27 | 1.0000 |
+| `hotel_book` | cluster + whole | 79/79 | 0 | 1.00e-27 | 1.0000 |
+| `bank_fraud_report` | heuristic | 78/78 | 0 | 2.13e-27 | 1.0000 |
+| `bank_fraud_report` | single_prompt + whole | 78/78 | 0 | 2.13e-27 | 1.0000 |
+| `bank_fraud_report` | single_prompt + chunk | 78/78 | 0 | 2.13e-27 | 1.0000 |
+| `bank_fraud_report` | hybrid + whole | 78/78 | 1 | 2.21e-27 | 0.9997 |
+| `bank_fraud_report` | cluster + whole | 78/78 | 0 | 2.13e-27 | 1.0000 |
+
+Every cell is significant at p < 1e-25. Effect sizes are at or near 1.0,
+meaning **in nearly every paired comparison the in-task score is lower
+than the out-of-task score**. The only cell with measurable overlap is
+the heuristic-baseline `hotel_book` row (U=90, r=0.9712), where 90 of
+the 79 × 79 = 6241 paired comparisons rank a positive above a negative.
+Every LLM regime achieves U ≤ 1 — at most one inversion across the
+sample. This is consistent with the score distributions reported above
+(non-overlapping at 1σ).
+
+Reproduce with `python experiments/significance.py`.
+
 ## Conclusion
 
 FuDGE is validated under all four label regimes (heuristic baseline +
 three LLM methods). The metric separates in-task from out-of-task
-conversations with 3-8× ratios and no 1σ overlap on both tasks. The
-single_prompt LLM method is the recommended labeling approach for
-label-free datasets like Thousand Voices.
+conversations with 3-8× ratios, no 1σ overlap, and Mann-Whitney U
+p-values below 1e-25 with rank-biserial effect sizes ≥ 0.97 on both
+tasks. The single_prompt LLM method is the recommended labeling
+approach for label-free datasets like Thousand Voices.
 
 ## Next Steps
 
@@ -351,7 +384,6 @@ label-free datasets like Thousand Voices.
    Voices (mental health)
 2. Compare open-source vs proprietary model flows using FuDGE scores
 3. (Deferred) FF1 (Flow-F1 Score) implementation
-4. (Deferred) Mann-Whitney U significance test on the discrimination
-   experiment
-5. (Deferred) Held-out taxonomy split to isolate fitting effects
+4. (Deferred) Held-out taxonomy split to isolate fitting effects from
+   genuine quality gains
 

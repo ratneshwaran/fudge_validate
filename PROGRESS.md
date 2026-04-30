@@ -194,8 +194,8 @@ pipeline:
 
 - LLM-as-a-judge baseline on STAR (for comparison against FuDGE)
 - FF1 (Flow-F1 Score) implementation
-- Statistical significance test (Mann–Whitney U) on existing discrimination
-  results — currently we only check 1σ separation
+- ~~Statistical significance test (Mann–Whitney U)~~ — DONE 2026-04-30,
+  see VALIDATION_REPORT.md. All cells p < 1e-25, effect size r ≥ 0.97.
 - Held-out taxonomy bootstrap split (50% in-task for taxonomy, 50% for
   labeling) to isolate fitting effects from genuine quality gains
 
@@ -213,3 +213,4 @@ pipeline:
 | `experiments/validate_discrimination.py` | Phase 1 / 4 experiment runner |
 | `tests/test_llm_label_smoke.py` | Phase 2 smoke tests |
 | `tests/test_label_source.py` | Phase 3 plumbing tests |
+| `experiments/significance.py` | Mann-Whitney U test across all (task × regime) cells |
