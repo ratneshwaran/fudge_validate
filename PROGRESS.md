@@ -194,10 +194,16 @@ pipeline:
 
 - LLM-as-a-judge baseline on STAR (for comparison against FuDGE)
 - FF1 (Flow-F1 Score) implementation
-- ~~Statistical significance test (Mann–Whitney U)~~ — DONE 2026-04-30,
-  see VALIDATION_REPORT.md. All cells p < 1e-25, effect size r ≥ 0.97.
-- Held-out taxonomy bootstrap split (50% in-task for taxonomy, 50% for
-  labeling) to isolate fitting effects from genuine quality gains
+- ~~Statistical significance test (Mann–Whitney U)~~ — DONE 2026-04-30.
+- ~~Bootstrap 95% CI on the discrimination ratio~~ — DONE 2026-04-30.
+- ~~Held-out flow split~~ — DONE 2026-04-30. **Major finding: ratios
+  collapse from 3-7.7× (in-distribution) to 1.7-1.9× (held-out) and
+  the LLM-vs-heuristic gap dissolves**. The metric works (p < 1e-21,
+  r ≥ 0.87) but the headline LLM-improvement claim was a fitting
+  artifact. See VALIDATION_REPORT.md.
+- Held-out *taxonomy* bootstrap split (orthogonal to the flow split —
+  bootstrap taxonomy on 50% of in-task, label the other 50% with that
+  taxonomy) — still deferred
 
 ---
 
