@@ -50,7 +50,7 @@ sys.path.insert(0, str(_REPO_ROOT / "src"))
 
 from fudge.data_loader import load_star_dialogues  # noqa: E402
 from fudge.embeddings import EmbeddingCache  # noqa: E402
-from fudge.types import Conversation  # noqa: E402
+from fudge.types import Conversation, Utterance  # noqa: E402
 
 # Per-million-token prices (USD). These are display-only — edit to match
 # whatever prices apply at the time of running.
@@ -823,19 +823,27 @@ def _window_method_messages(
 
 def _validate_label(
     returned_label: str,
-    actor: str,
+    utterance: Utterance,
     taxonomy_for_actor: list[dict],
     embedder: EmbeddingCache,
     warnings: list[str],
     where: str,
 ) -> str:
+    """Return `returned_label` if valid for the actor; otherwise embed the
+    *utterance text* (not the bad label string) and pick the nearest taxonomy
+    entry. Embedding the bad label can land on a semantically opposite intent
+    that just happens to share tokens (e.g., model returns agent `ask_name`
+    on a user turn, label-string fallback picks user `provide_name` — opposite
+    intent). Embedding the utterance text matches by what the speaker
+    actually did.
+    """
     valid = {t["label"] for t in taxonomy_for_actor}
     if returned_label in valid:
         return returned_label
-    fallback = nearest_taxonomy_label(returned_label, taxonomy_for_actor, embedder)
+    fallback = nearest_taxonomy_label(utterance.text, taxonomy_for_actor, embedder)
     warnings.append(
-        f"{where}: model returned '{returned_label}' (not in {actor} taxonomy) "
-        f"-> embedding fallback '{fallback}'"
+        f"{where}: model returned '{returned_label}' (not in {utterance.actor} "
+        f"taxonomy) -> utterance-text fallback '{fallback}'"
     )
     return fallback
 
@@ -880,7 +888,7 @@ async def label_dialogue_whole(
             continue
         out_labels.append(
             _validate_label(
-                by_index[i], u.actor, tax, embedder, warnings,
+                by_index[i], u, tax, embedder, warnings,
                 where=f"dialogue {getattr(conv, 'dialogue_id', '?')} idx {i}",
             )
         )
@@ -911,7 +919,7 @@ async def label_dialogue_window(
             schema=schema,
         )
         return _validate_label(
-            parsed["label"], u.actor, tax, embedder, warnings,
+            parsed["label"], u, tax, embedder, warnings,
             where=f"dialogue {getattr(conv, 'dialogue_id', '?')} idx {i}",
         )
 
@@ -992,7 +1000,7 @@ async def label_dialogue_chunk(
                 out[abs_idx] = nearest_taxonomy_label(u.text, tax, embedder)
                 continue
             out[abs_idx] = _validate_label(
-                by_index[i], u.actor, tax, embedder, warnings,
+                by_index[i], u, tax, embedder, warnings,
                 where=f"dialogue {conv.dialogue_id} chunk@{start} idx {i} (abs {abs_idx})",
             )
 
@@ -1138,33 +1146,39 @@ async def run_pipeline(
     print(f"[stage2] Labeling {len(target_convs)} dialogues with method={cfg.method}")
 
     async def _label_one(conv: Conversation) -> tuple[int, list[str], list[str]]:
-        method = cfg.method
-        if method == "whole":
+        if cfg.method == "whole":
             messages = _whole_method_messages(conv, taxonomy["user"], taxonomy["agent"])
             est = _estimate_tokens(messages)
             if est > WHOLE_METHOD_TOKEN_BUDGET:
-                print(
-                    f"[stage2] Dialogue {getattr(conv, 'dialogue_id', '?')} "
-                    f"estimated at {est} tokens (>{WHOLE_METHOD_TOKEN_BUDGET}); "
-                    "falling back to window method for this dialogue."
+                # Hard fail rather than silently switching methods. A silent
+                # switch would write `window` results into the `whole/` output
+                # tree and make ablations non-reproducible — the user should
+                # explicitly choose --method chunk or --method window for
+                # datasets with long dialogues.
+                raise RuntimeError(
+                    f"Dialogue {getattr(conv, 'dialogue_id', '?')} estimated "
+                    f"at {est} tokens (> WHOLE_METHOD_TOKEN_BUDGET="
+                    f"{WHOLE_METHOD_TOKEN_BUDGET}). The whole method dilutes "
+                    "attention beyond this point. Re-run with --method chunk "
+                    "or --method window, or raise WHOLE_METHOD_TOKEN_BUDGET "
+                    "if you've verified the model handles it."
                 )
-                method = "window"
 
-        if method == "whole":
+        if cfg.method == "whole":
             labels, warnings = await label_dialogue_whole(
                 conv, taxonomy["user"], taxonomy["agent"], client, embedder,
             )
-        elif method == "chunk":
+        elif cfg.method == "chunk":
             labels, warnings = await label_dialogue_chunk(
                 conv, taxonomy["user"], taxonomy["agent"], client, embedder,
                 cfg.chunk_size, cfg.chunk_stride,
             )
-        elif method == "window":
+        elif cfg.method == "window":
             labels, warnings = await label_dialogue_window(
                 conv, taxonomy["user"], taxonomy["agent"], client, embedder, cfg.window_size,
             )
         else:
-            raise ValueError(f"Unknown --method: {method}")
+            raise ValueError(f"Unknown --method: {cfg.method}")
 
         out_path = method_dir / f"{conv.dialogue_id}.json"
         with open(out_path, "w", encoding="utf-8") as f:

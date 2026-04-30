@@ -28,12 +28,65 @@ def _make_conv(dialogue_id, utterances):
 
 
 def test_load_llm_labels_reads_directory(tmp_path):
+    """Legacy layout: no sibling taxonomy.json -> version checking skipped."""
     (tmp_path / "1.json").write_text(json.dumps({"utterance_labels": ["a", "b"]}))
     (tmp_path / "42.json").write_text(json.dumps({"utterance_labels": ["c"]}))
-    (tmp_path / "taxonomy.json").write_text(json.dumps({"user": [], "agent": []}))  # ignored
 
     out = load_llm_labels(tmp_path)
     assert out == {1: ["a", "b"], 42: ["c"]}
+
+
+def _hash_taxonomy(taxonomy: dict) -> str:
+    import hashlib
+
+    return hashlib.sha256(
+        json.dumps(taxonomy, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    ).hexdigest()[:16]
+
+
+def test_load_llm_labels_validates_taxonomy_version(tmp_path):
+    """Standard layout: <tax_dir>/taxonomy.json + <tax_dir>/<lab>/<id>.json.
+    Files matching the active taxonomy load; mismatches raise."""
+    tax_dir = tmp_path / "single_prompt"
+    label_dir = tax_dir / "whole"
+    label_dir.mkdir(parents=True)
+
+    taxonomy = {"user": [{"label": "u_a", "description": "x"}],
+                "agent": [{"label": "a_a", "description": "y"}]}
+    (tax_dir / "taxonomy.json").write_text(json.dumps(taxonomy))
+    version = _hash_taxonomy(taxonomy)
+
+    (label_dir / "1.json").write_text(
+        json.dumps({"utterance_labels": ["u_a", "a_a"], "taxonomy_version": version})
+    )
+    (label_dir / "2.json").write_text(
+        json.dumps({"utterance_labels": ["u_a"], "taxonomy_version": version})
+    )
+
+    out = load_llm_labels(label_dir)
+    assert out == {1: ["u_a", "a_a"], 2: ["u_a"]}
+
+
+def test_load_llm_labels_raises_on_stale_version(tmp_path):
+    tax_dir = tmp_path / "single_prompt"
+    label_dir = tax_dir / "whole"
+    label_dir.mkdir(parents=True)
+
+    taxonomy = {"user": [{"label": "u_a", "description": "x"}],
+                "agent": [{"label": "a_a", "description": "y"}]}
+    (tax_dir / "taxonomy.json").write_text(json.dumps(taxonomy))
+    fresh_version = _hash_taxonomy(taxonomy)
+
+    # One up-to-date file, one with a stale version.
+    (label_dir / "1.json").write_text(
+        json.dumps({"utterance_labels": ["u_a"], "taxonomy_version": fresh_version})
+    )
+    (label_dir / "2.json").write_text(
+        json.dumps({"utterance_labels": ["u_a"], "taxonomy_version": "stale_hash_xx"})
+    )
+
+    with pytest.raises(ValueError, match="Stale taxonomy_version"):
+        load_llm_labels(label_dir)
 
 
 def test_label_source_replaces_labels():

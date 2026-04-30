@@ -1,9 +1,17 @@
 """Load STAR dataset and build supervised dialogue flows from task definitions."""
+import hashlib
 import json
 from pathlib import Path
 from collections import defaultdict
 
 from .types import Utterance, Conversation, IntentBucket, DialogueFlow
+
+
+def _hash_taxonomy(taxonomy: dict) -> str:
+    """Same hash the LLM-labeling script writes into per-dialogue files
+    (`scripts/llm_label_star.py:run_pipeline`)."""
+    blob = json.dumps(taxonomy, sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
 
 
 def load_star_dialogues(star_dir: str, filter_unlabeled: bool = True) -> list[Conversation]:
@@ -87,9 +95,26 @@ def load_llm_labels(label_dir: str | Path) -> dict[int, list[str]]:
     Reads every <dialogue_id>.json under `label_dir` produced by
     scripts/llm_label_star.py. Returns dialogue_id -> utterance_labels (one
     label per Conversation.utterances entry).
+
+    Validates `taxonomy_version` against the sibling `taxonomy.json`
+    (one level up from `label_dir`, e.g. `<task>/<taxonomy_method>/taxonomy.json`).
+    Raises if any per-dialogue file references a different taxonomy than the
+    one currently on disk — this catches stale outputs from a prior
+    bootstrap that would otherwise silently mix taxonomies and invalidate
+    flow-construction.
+
+    If no sibling `taxonomy.json` exists, version checking is skipped (legacy
+    layouts).
     """
     label_dir = Path(label_dir)
+    taxonomy_path = label_dir.parent / "taxonomy.json"
+    expected_version: str | None = None
+    if taxonomy_path.exists():
+        with open(taxonomy_path, encoding="utf-8") as f:
+            expected_version = _hash_taxonomy(json.load(f))
+
     out: dict[int, list[str]] = {}
+    mismatched: list[tuple[int, str | None]] = []
     for f in label_dir.glob("*.json"):
         try:
             did = int(f.stem)
@@ -97,7 +122,23 @@ def load_llm_labels(label_dir: str | Path) -> dict[int, list[str]]:
             continue
         with open(f, encoding="utf-8") as fp:
             data = json.load(fp)
+        version = data.get("taxonomy_version")
+        if expected_version is not None and version != expected_version:
+            mismatched.append((did, version))
+            continue
         out[did] = list(data["utterance_labels"])
+
+    if mismatched:
+        sample = mismatched[:5]
+        more = "..." if len(mismatched) > 5 else ""
+        raise ValueError(
+            f"Stale taxonomy_version on label files in {label_dir} (expected "
+            f"{expected_version}). Mismatched dialogues: "
+            f"{[(d, v) for d, v in sample]}{more} "
+            f"(total {len(mismatched)} of {len(mismatched) + len(out)}). "
+            "Re-run `python scripts/llm_label_star.py ...` to refresh, or "
+            "clear the directory before re-running with --limit."
+        )
     return out
 
 
