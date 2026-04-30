@@ -89,6 +89,101 @@ def load_star_dialogues(star_dir: str, filter_unlabeled: bool = True) -> list[Co
     return conversations
 
 
+_TV_SPEAKER_TO_ACTOR = {
+    "Therapist": "agent",
+    "Client": "user",
+}
+
+
+def _tv_stem_to_dialogue_id(stem: str) -> int:
+    """Encode a TV stem like '1_P10' as a deterministic int.
+
+    Subjects are 1..500, phases are P5..P11, so `subject * 100 + phase`
+    yields a unique non-overlapping integer per file (max ~50011).
+    """
+    subj_str, phase_str = stem.split("_P", 1)
+    return int(subj_str) * 100 + int(phase_str)
+
+
+def load_thousand_voices_dialogues(
+    tv_dir: str | Path,
+    task_field: str = "type",
+    require_phases: tuple[str, ...] | None = None,
+) -> list[Conversation]:
+    """Load Thousand Voices of Trauma conversations as `Conversation` objects.
+
+    `tv_dir` should point at the `ThousandVoicesOfTrauma/` directory containing
+    `conversations/` and `metadata/` subdirs. Files are named `<subj>_P<phase>_conversation.json`
+    and `<subj>_P<phase>_metadata.json` respectively.
+
+    Each conversation is a list of strings under `full_conversation`, prefixed
+    `Therapist: ...` or `Client: ...`. We map Therapist→agent, Client→user so
+    the rest of the FuDGE pipeline (built around STAR's user/agent convention)
+    works unchanged.
+
+    `task_field` selects which metadata field to use as `Conversation.task`:
+      - "type" (default): coarse trauma category, 13 classes (witnessing
+        violence, accidents, natural disasters, ...)
+      - "session_topic": finer-grained topic, 23 distinct values
+    The choice drives positives/negatives bucketing in the discrimination
+    experiment.
+
+    `require_phases` optionally restricts to a subset like ('P10',) to focus on
+    a single therapy stage; default loads all six phases.
+
+    No labels are produced — TV has none. Run `scripts/llm_label_star.py`
+    against these conversations and feed the result via `load_llm_labels` +
+    `build_flow_from_conversations(label_source=...)`.
+    """
+    tv_dir = Path(tv_dir)
+    conv_dir = tv_dir / "conversations"
+    meta_dir = tv_dir / "metadata"
+    if not conv_dir.is_dir() or not meta_dir.is_dir():
+        raise FileNotFoundError(
+            f"Expected `conversations/` and `metadata/` under {tv_dir}; "
+            "point tv_dir at the ThousandVoicesOfTrauma root."
+        )
+
+    conversations: list[Conversation] = []
+    for conv_file in sorted(conv_dir.glob("*_conversation.json")):
+        stem = conv_file.stem.removesuffix("_conversation")
+        if require_phases is not None:
+            phase = "P" + stem.split("_P", 1)[1]
+            if phase not in require_phases:
+                continue
+
+        meta_file = meta_dir / f"{stem}_metadata.json"
+        if not meta_file.exists():
+            continue
+
+        with open(conv_file, encoding="utf-8") as f:
+            conv_data = json.load(f)
+        with open(meta_file, encoding="utf-8") as f:
+            meta = json.load(f)
+
+        utterances: list[Utterance] = []
+        for line in conv_data.get("full_conversation", []):
+            if ":" not in line:
+                continue
+            speaker, text = line.split(":", 1)
+            actor = _TV_SPEAKER_TO_ACTOR.get(speaker.strip())
+            if actor is None:
+                continue
+            text = text.strip()
+            if text:
+                utterances.append(Utterance(actor=actor, text=text))
+
+        task = meta.get("trauma_info", {}).get(task_field, "")
+        if utterances and task:
+            conversations.append(Conversation(
+                utterances=utterances,
+                task=task,
+                dialogue_id=_tv_stem_to_dialogue_id(stem),
+            ))
+
+    return conversations
+
+
 def load_llm_labels(label_dir: str | Path) -> dict[int, list[str]]:
     """Load per-dialogue LLM-generated label files.
 
