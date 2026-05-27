@@ -159,7 +159,7 @@ def run_multisplit(
     Returns:
       regime_split_ratios: dict regime -> list[float] of length n_splits
       regime_pos_scores:   dict regime -> dict[conv_id -> list[float]]
-      regime_neg_scores:   dict regime -> list[float] (pooled across splits)
+      regime_neg_scores:   dict regime -> dict[conv_id -> list[float]]
       pos_ids_per_split:   list[list[int]] (for paired test ordering)
     """
     task_convs = by_task[task]
@@ -167,7 +167,7 @@ def run_multisplit(
 
     regime_split_ratios = {r[0]: [] for r in regimes}
     regime_pos_scores: dict[str, dict[int, list[float]]] = {r[0]: {} for r in regimes}
-    regime_neg_scores: dict[str, list[float]] = {r[0]: [] for r in regimes}
+    regime_neg_scores: dict[str, dict[int, list[float]]] = {r[0]: {} for r in regimes}
     regime_mw_per_split: dict[str, list[dict]] = {r[0]: [] for r in regimes}
 
     for split_i in tqdm(range(n_splits), desc=f"{task} splits", leave=False):
@@ -187,7 +187,8 @@ def run_multisplit(
             regime_mw_per_split[label].append(mannwhitney(pos, neg))
             for cid, s in zip(res["pos_ids"], pos):
                 regime_pos_scores[label].setdefault(cid, []).append(float(s))
-            regime_neg_scores[label].extend(neg.tolist())
+            for cid, s in zip(res["neg_ids"], neg):
+                regime_neg_scores[label].setdefault(cid, []).append(float(s))
 
     return {
         "regime_split_ratios": regime_split_ratios,
@@ -201,11 +202,13 @@ def aggregate_regime(label: str, mr: dict) -> dict:
     ratios = mr["regime_split_ratios"][label]
     pos_avg = {cid: float(np.mean(scores))
                for cid, scores in mr["regime_pos_scores"][label].items()}
-    neg = np.array(mr["regime_neg_scores"][label])
+    neg_avg = {cid: float(np.mean(scores))
+               for cid, scores in mr["regime_neg_scores"][label].items()}
     pos_arr = np.array(list(pos_avg.values()))
-    if not ratios or not len(pos_arr) or not len(neg):
+    neg_arr = np.array(list(neg_avg.values()))
+    if not ratios or not len(pos_arr) or not len(neg_arr):
         return {"regime": label, "n_splits": 0}
-    mw = mannwhitney(pos_arr, neg)
+    mw = mannwhitney(pos_arr, neg_arr)
     return {
         "regime": label,
         "n_splits": len(ratios),
@@ -214,7 +217,7 @@ def aggregate_regime(label: str, mr: dict) -> dict:
         "ratio_min": float(np.min(ratios)),
         "ratio_max": float(np.max(ratios)),
         "n_pos_unique": len(pos_avg),
-        "n_neg_pooled": len(neg),
+        "n_neg_unique": len(neg_avg),
         **mw,
     }
 

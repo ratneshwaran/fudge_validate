@@ -384,22 +384,32 @@ numbers; the qualitative ordering is unchanged.)
 
 ### Held-out, 10 random 50/50 splits (flow rebuilt each split)
 
-| task | regime | ratio mean ± std | range across splits | pooled p (1-sided) | r |
+| task | regime | ratio mean ± std | range across splits | p (1-sided) | r |
 |---|---|---|---|---|---|
-| `hotel_book` | heuristic | 1.77× ± 0.07 | [1.66, 1.88] | 1.59e-72 | 0.9048 |
-| `hotel_book` | single_prompt + whole | 1.84× ± 0.07 | [1.74, 1.95] | 4.05e-73 | 0.9086 |
-| `hotel_book` | single_prompt + chunk | 1.85× ± 0.07 | [1.76, 1.96] | 1.00e-73 | 0.9125 |
-| `hotel_book` | hybrid + whole | 1.88× ± 0.07 | [1.77, 2.00] | 7.95e-74 | 0.9131 |
-| `hotel_book` | cluster + whole | 1.76× ± 0.06 | [1.64, 1.84] | 2.34e-72 | 0.9037 |
-| `bank_fraud_report` | heuristic | 2.07× ± 0.09 | [1.90, 2.20] | 5.53e-78 | 0.9478 |
-| `bank_fraud_report` | single_prompt + whole | 2.16× ± 0.09 | [2.01, 2.34] | 2.60e-80 | 0.9622 |
-| `bank_fraud_report` | single_prompt + chunk | 2.16× ± 0.09 | [2.02, 2.30] | 2.35e-80 | 0.9625 |
-| `bank_fraud_report` | hybrid + whole | 2.12× ± 0.07 | [2.02, 2.26] | 3.75e-81 | 0.9674 |
-| `bank_fraud_report` | cluster + whole | 2.01× ± 0.08 | [1.89, 2.15] | 5.32e-80 | 0.9603 |
+| `hotel_book` | heuristic | 1.77× ± 0.07 | [1.66, 1.88] | 2.06e-70 | 0.9032 |
+| `hotel_book` | single_prompt + whole | 1.84× ± 0.07 | [1.74, 1.95] | 1.11e-70 | 0.9050 |
+| `hotel_book` | single_prompt + chunk | 1.85× ± 0.07 | [1.76, 1.96] | 2.07e-71 | 0.9098 |
+| `hotel_book` | hybrid + whole | 1.88× ± 0.07 | [1.77, 2.00] | 1.59e-71 | 0.9106 |
+| `hotel_book` | cluster + whole | 1.76× ± 0.06 | [1.64, 1.84] | 5.67e-70 | 0.9003 |
+| `bank_fraud_report` | heuristic | 2.07× ± 0.09 | [1.90, 2.20] | 5.54e-76 | 0.9479 |
+| `bank_fraud_report` | single_prompt + whole | 2.16× ± 0.09 | [2.01, 2.34] | 3.43e-78 | 0.9620 |
+| `bank_fraud_report` | single_prompt + chunk | 2.16× ± 0.09 | [2.02, 2.30] | 2.56e-78 | 0.9628 |
+| `bank_fraud_report` | hybrid + whole | 2.12× ± 0.07 | [2.02, 2.26] | 3.94e-79 | 0.9679 |
+| `bank_fraud_report` | cluster + whole | 2.01× ± 0.08 | [1.89, 2.15] | 6.35e-78 | 0.9603 |
+
+The Mann-Whitney U is run on per-conversation averaged scores on
+**both** sides — each held-out positive's score is the mean across the
+splits where it appeared as a positive, and each out-of-task negative's
+score is the mean across the splits where it was sampled. An earlier
+version of this table pooled negative scores across splits without
+averaging, which inflated `n_neg` ~10× and overstated the reported
+p-values by 1–2 orders of magnitude; the corrected numbers above
+follow the same per-conv-averaging convention used for the paired
+Wilcoxon test in the next section.
 
 Variance across splits is small (≤ 0.09) — the held-out ratio is a
 stable estimate, not a single-split artifact. Every cell remains highly
-significant (pooled p < 1e-72, rank-biserial r ≥ 0.90).
+significant (p < 1e-69, rank-biserial r ≥ 0.90).
 
 ### Between-regime paired comparisons (held-out per-conv averaged scores)
 
@@ -466,7 +476,7 @@ Reproduce with `python experiments/significance.py --n-splits 10`.
 
 FuDGE is a valid discrimination metric for dialogue flows. Under
 multi-split held-out evaluation it produces **ratio ~1.77-1.88×
-(hotel) / ~2.01-2.16× (bank), pooled p < 1e-72, rank-biserial r ≥ 0.90
+(hotel) / ~2.01-2.16× (bank), p < 1e-69, rank-biserial r ≥ 0.90
 on both tasks across 10 random 50/50 splits**. Variance across splits
 is small (≤ 0.09×), so the held-out estimate is stable. The headline
 3-8× ratios from in-distribution evaluation were inflated by the
