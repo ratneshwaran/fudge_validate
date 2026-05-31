@@ -95,6 +95,83 @@ def create_star_split(
     return meta
 
 
+def create_tv_split(
+    tv_dir: str,
+    out_path: str | Path,
+    train_frac: float = 0.7,
+    seed: int = 20260530,
+    drop_types: tuple[str, ...] = ("animal attack", "imprisonment"),
+) -> dict:
+    """Per-phase 70/30 stratified TV split. Stratum key = phase (P5..P11).
+
+    Within each phase, the split is type-stratified (each phase x type
+    cell split proportionally), so each phase's test set has a balanced
+    trauma-type distribution. `drop_types` removes the smallest type
+    classes (animal attack n=6, imprisonment n=12 by default) before
+    splitting; they're too small for meaningful held-out evaluation.
+    """
+    from .data_loader import load_thousand_voices_dialogues
+
+    convs_by_phase: dict[str, list] = {}
+    type_by_id: dict[int, str] = {}
+    dropped = 0
+    for phase in ("P5", "P6", "P7", "P8", "P10", "P11"):
+        convs = load_thousand_voices_dialogues(
+            tv_dir, task_field="type", require_phases=(phase,)
+        )
+        kept = []
+        for c in convs:
+            if c.task in drop_types:
+                dropped += 1
+                continue
+            type_by_id[c.dialogue_id] = c.task
+            kept.append(c)
+        convs_by_phase[phase] = kept
+
+    # For each phase, group by type and split each cell proportionally.
+    splits: dict[str, dict[str, list[int]]] = {}
+    rng = np.random.default_rng(seed)
+    for phase, convs in convs_by_phase.items():
+        by_type: dict[str, list[int]] = defaultdict(list)
+        for c in convs:
+            by_type[c.task].append(c.dialogue_id)
+
+        train_ids: list[int] = []
+        test_ids: list[int] = []
+        for trauma_type, ids in sorted(by_type.items()):
+            ids_sorted = sorted(ids)
+            idx = np.arange(len(ids_sorted))
+            rng.shuffle(idx)
+            n_train = max(1, int(round(train_frac * len(ids_sorted))))
+            if n_train >= len(ids_sorted):
+                train_ids.extend(ids_sorted[i] for i in idx)
+            else:
+                train_ids.extend(ids_sorted[i] for i in idx[:n_train])
+                test_ids.extend(ids_sorted[i] for i in idx[n_train:])
+        splits[phase] = {"train": sorted(train_ids), "test": sorted(test_ids)}
+
+    meta = {
+        "dataset": "TV",
+        "version": Path(out_path).stem,
+        "stratum": "phase",
+        "sub_stratum": "type (within phase)",
+        "train_frac": train_frac,
+        "seed": seed,
+        "drop_types": list(drop_types),
+        "n_dropped_dialogues": dropped,
+        "n_strata": len(splits),
+        "n_train_total": sum(len(v["train"]) for v in splits.values()),
+        "n_test_total": sum(len(v["test"]) for v in splits.values()),
+        "type_by_dialogue_id": {str(k): v for k, v in type_by_id.items()},
+        "splits": splits,
+    }
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(out_path, "w", encoding="utf-8") as f:
+        json.dump(meta, f, indent=2)
+    return meta
+
+
 def load_split(path: str | Path) -> dict:
     with open(path, encoding="utf-8") as f:
         return json.load(f)
