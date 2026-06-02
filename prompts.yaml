@@ -1,0 +1,89 @@
+# DAG-generation prompts for the LLM panel (TODO 5).
+#
+# Five sequential prompts that drive an LLM through generating, critiquing,
+# revising, finalising, and merging a Prolonged-Exposure dialogue-flow DAG.
+#
+# Prompt variants (per EXPLAINER.md TODO 5):
+#   V1 = prompt 1 alone
+#   V2 = prompts 1-5 fused into one call
+#   V3 = prompts 1-5 run sequentially
+#
+# prompt_5 contains template slots ({{design_guidelines}}, {{thousand_voices_data}})
+# filled at runtime with ~50 randomly sampled TV training conversations.
+
+version: 1
+
+prompts:
+  - id: 1
+    name: generate
+    text: |
+      Given the context of mental health/therapy grounding, design a directed acyclic dialog flow suitable for visualization with mermaid.js. This flow should depict the nuances and potential branches of interactions between a bot and a user. Please adhere to the following guidelines:
+
+      Nodes Definition: Use distinct nodes to represent the bot ("B") and the user ("U").
+
+      High-Level Dialog Action: Each node should encapsulate that segment's core sentiment or function in the conversation, relevant to mental health/therapy. It should be a label for the node representing a high-level dialogue action and not just the dialog.
+
+      Flow & Directionality: Create directed connections between nodes to represent the progression of the conversation. The dialogue should flow from one node to potentially multiple nodes, allowing for various conversational turns.
+
+      Diverse Conversational Possibilities: Ensure that bot nodes can lead to multiple user nodes and vice versa. This should account for various user responses or bot prompts, showcasing the range of interactions possible within mental health/therapy.
+
+      Acyclic Structure: The dialog flow must not have loops or cyclic pathways. If a similar action or sentiment arises later in the conversation, introduce a new node to represent it, rather than looping back to an earlier node.
+
+      Mermaid.js Compatibility: Ensure that the constructed flow is adherent to mermaid.js graph notation, guaranteeing its seamless rendering.
+
+      Considering the guidelines, craft a dialogue flow focused on mental health/therapy. The bot always begins by greeting the user and asking for what they want. The graph should be connected. The bot and user nodes should be in different colors. A bot node is only followed by user nodes and user nodes are by bot nodes.
+
+  - id: 2
+    name: critique
+    text: |
+      Based on the below evaluation criteria, suggest some improvements and provide concise + actionable feedback on the flow just generated:
+
+      Optimality: Check for redundancy. Ensure that nodes aren't replicating the same or very similar dialog actions, even if they arise at different points in the conversation.
+
+      Clarity of High-Level Dialog Action: For every node, evaluate if the high-level dialog action is clear and meaningful. Avoid nodes that are vague or overly complex. Can someone unfamiliar with the domain understand the flow and interactions by looking at the flow?
+
+      Extensiveness: Does the flow account for diverse conversational possibilities? Are all the nodes interconnected to the graph? Does the flow cover all major high level topics and interactions within the given domain?
+
+      Representativeness of the Domain:
+      Bot Nodes (B): Do the bot nodes represent clear and unambiguous actions? Are they too broad or too specific?
+      User Nodes (U): Do user nodes accurately capture an adequate range of potential user responses and inquiries relevant to the domain?
+
+  - id: 3
+    name: revise
+    text: |
+      Taking into consideration the feedback and the original design guidelines - keep it in directed acyclic graph structure and make sure all new components are labeled and connected to the graph correctly - revise the flow. Ensure your revised flow addresses the identified areas of improvement while still adhering to the primary instructions for flow construction. Make sure to account for all new nodes including merged nodes and their labels/colors. Make sure all user nodes connect with bot nodes and bot nodes are the end of the conversations. Give your updates in the below format:
+
+      'split_nodes':
+      # 'NodeToSplit': ['NewNode1', 'NewNode2', ...],
+
+      'add_nodes':
+      # 'NodeToAdd': 'Label',
+
+      'remove_nodes':
+      # 'NodeToRemove1', 'NodeToRemove2', ...
+
+      'relable_nodes':
+      # 'NodeToRelabel': 'NewLabel',
+
+      'add_edges':
+      # ('Start Node', 'End Node'),
+
+      'remove_edges':
+      # ('Start Node', 'End Node'),
+
+  - id: 4
+    name: finalize
+    text: |
+      Intrinsic Flow Finalization Prompt
+
+      Clean up the flow to create a final flow. Ensure your revised flow addresses the identified areas of improvement while still adhering to the primary instructions for flow construction. Get rid of hanging/loose user nodes (user nodes with no output), have graph in directed acyclic structure, bot nodes shouldn't be connected to other bot nodes, and user nodes shouldn't be connected to other user nodes. All nodes should have input/output except begin and end nodes, one node shouldn't point to another node more than once, and make sure all bot nodes are correctly colored
+
+  - id: 5
+    name: merge
+    text: |
+      Given the two dialogue flows for the mental health/therapy bot. One flow is LLM generated and the other is from data examples, merge all the unique elements of the two flows and do not duplicate similar elements. Merge the two flows based on the following design guidelines:
+      < Design guidelines >
+      {{design_guidelines}}
+
+      < Thousand Voices Data >
+      {{thousand_voices_data}}
