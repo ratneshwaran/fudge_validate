@@ -219,10 +219,28 @@ class DAGClient:
 # Prompt loading + Prompt-5 data injection
 # ---------------------------------------------------------------------------
 
-def load_prompts(path: Path) -> dict[int, str]:
+def load_prompts(path: Path) -> tuple[dict[int, str], dict[str, dict]]:
+    """Return ({prompt_id: text}, {phase_id: {name, description, moves}})."""
     with open(path, encoding="utf-8") as f:
         doc = yaml.safe_load(f)
-    return {int(p["id"]): p["text"] for p in doc["prompts"]}
+    prompts = {int(p["id"]): p["text"] for p in doc["prompts"]}
+    phases = doc.get("phases", {}) or {}
+    return prompts, phases
+
+
+def render_phase_slots(text: str, phase: str, phases: dict[str, dict]) -> str:
+    """Fill {{phase_*}} slots for one phase. No-op for prompts without slots."""
+    meta = phases.get(phase)
+    if not meta:
+        raise SystemExit(
+            f"prompts.yaml has no `phases` entry for {phase}; cannot phase-condition. "
+            f"Add it (see the phases: block) before generating."
+        )
+    return (text
+            .replace("{{phase_id}}", phase)
+            .replace("{{phase_name}}", str(meta.get("name", phase)))
+            .replace("{{phase_description}}", str(meta.get("description", "")).strip())
+            .replace("{{phase_moves}}", str(meta.get("moves", "")).strip()))
 
 
 def render_tv_examples(convs: list[Conversation], max_chars_per_conv: int) -> str:
@@ -357,11 +375,19 @@ def extract_mermaid(text: str) -> str:
 
 
 def _infer_actor(node_id: str) -> str:
-    head = node_id[0].upper()
+    # Dominant convention: the id starts with the actor letter (B#/U#), incl.
+    # suffixed variants (BEnd1, B_CRISIS, U3a, ...). Some models prefix ids
+    # (e.g. "nodeB1"/"nodeU1"); fall back to the first actor letter that is
+    # immediately followed by a digit so those still resolve instead of going
+    # "unknown" (which would silently drop the node from actor-matched alignment).
+    head = node_id[:1].upper()
     if head == "B":
         return "agent"
     if head == "U":
         return "user"
+    m = re.search(r"([BUbu])\d", node_id)
+    if m:
+        return "agent" if m.group(1).upper() == "B" else "user"
     return "unknown"
 
 
@@ -434,6 +460,43 @@ def parse_mermaid_dag(mmd: str) -> dict:
     return {"nodes": node_list, "edges": uniq_edges}
 
 
+def check_dag_validity(dag: dict) -> dict:
+    """Structural sanity of a parsed DAG (TODO 5 guard for #2).
+
+    Reports rather than mutates — downstream alignment needs an acyclic, single-
+    component graph, so a failing DAG should be flagged for a reroll/prune before
+    it reaches TODO 7. Checks: acyclicity, weak-connectivity (one component),
+    unknown-actor nodes, and bot/user alternation violations.
+    """
+    import networkx as nx
+
+    nodes = dag["nodes"]
+    edges = dag["edges"]
+    actor = {n["id"]: n["actor"] for n in nodes}
+    g = nx.DiGraph()
+    g.add_nodes_from(actor)
+    g.add_edges_from((e["from"], e["to"]) for e in edges)
+
+    acyclic = nx.is_directed_acyclic_graph(g)
+    n_cycles = 0 if acyclic else len(list(nx.simple_cycles(g)))
+    n_components = nx.number_weakly_connected_components(g) if g.number_of_nodes() else 0
+    n_unknown = sum(1 for a in actor.values() if a == "unknown")
+    # same-actor adjacency (B->B or U->U) breaks strict alternation
+    n_alt_violations = sum(
+        1 for e in edges
+        if actor.get(e["from"]) == actor.get(e["to"]) and actor.get(e["from"]) in ("agent", "user")
+    )
+    ok = acyclic and n_components <= 1 and n_unknown == 0
+    return {
+        "ok": ok,
+        "acyclic": acyclic,
+        "n_cycles": n_cycles,
+        "n_components": n_components,
+        "n_unknown_actor": n_unknown,
+        "n_alternation_violations": n_alt_violations,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Orchestration
 # ---------------------------------------------------------------------------
@@ -443,6 +506,7 @@ async def generate_one(
     variant: str,
     phase: str,
     prompts: dict[int, str],
+    phases: dict[str, dict],
     tv_dir: str,
     split: dict,
     out_root: Path,
@@ -457,6 +521,9 @@ async def generate_one(
     spec = MODEL_REGISTRY[model_name]
     out_dir = out_root / model_name / variant / phase
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Phase-condition every prompt (fills {{phase_*}} slots) before use.
+    prompts = {pid: render_phase_slots(text, phase, phases) for pid, text in prompts.items()}
 
     prompt5_filled = ""
     n_used = 0
@@ -481,10 +548,13 @@ async def generate_one(
 
         mmd = extract_mermaid(result["final"])
         dag = parse_mermaid_dag(mmd)
+        validity = check_dag_validity(dag)
 
         (out_dir / "dag.mmd").write_text(mmd, encoding="utf-8")
         with open(out_dir / "dag.json", "w", encoding="utf-8") as f:
             json.dump(dag, f, ensure_ascii=False, indent=2)
+        with open(out_dir / "validity.json", "w", encoding="utf-8") as f:
+            json.dump(validity, f, ensure_ascii=False, indent=2)
         with open(out_dir / "transcript.json", "w", encoding="utf-8") as f:
             json.dump({
                 "model": model_name, "slug": spec["slug"], "variant": variant,
@@ -496,6 +566,7 @@ async def generate_one(
             "model": model_name, "variant": variant, "phase": phase,
             "n_nodes": len(dag["nodes"]), "n_edges": len(dag["edges"]),
             "n_examples": n_used, "mmd_chars": len(mmd),
+            "validity": validity,
             "cache_hits": client.cache_hits, "api_calls": client.api_calls,
             "tokens_in": client.usage.input_tokens,
             "tokens_out": client.usage.output_tokens,
@@ -538,7 +609,7 @@ async def _async_main(args: argparse.Namespace) -> None:
         raise SystemExit("Specify --model NAME (repeatable) or --all-models.")
     variants = args.variant or list(VARIANTS)
 
-    prompts = load_prompts(Path(args.prompts))
+    prompts, phases = load_prompts(Path(args.prompts))
     split = load_split(args.split)
 
     cache = star.LLMCache(Path(args.cache_dir))
@@ -555,7 +626,7 @@ async def _async_main(args: argparse.Namespace) -> None:
                 t0 = time.time()
                 s = await generate_one(
                     model_name=model_name, variant=variant, phase=phase,
-                    prompts=prompts, tv_dir=args.tv_dir, split=split,
+                    prompts=prompts, phases=phases, tv_dir=args.tv_dir, split=split,
                     out_root=out_root, cache=cache, logger=logger,
                     dry_run=args.dry_run, concurrency=args.concurrency,
                     n_examples=args.n_examples,
@@ -563,9 +634,20 @@ async def _async_main(args: argparse.Namespace) -> None:
                 )
                 s["elapsed_s"] = round(time.time() - t0, 1)
                 summaries.append(s)
+                v = s["validity"]
+                flag = "ok" if v["ok"] else (
+                    "BAD[" + ",".join(
+                        x for x, on in [
+                            (f"{v['n_cycles']}cyc", not v["acyclic"]),
+                            (f"{v['n_components']}comp", v["n_components"] > 1),
+                            (f"{v['n_unknown_actor']}unk", v["n_unknown_actor"] > 0),
+                        ] if on
+                    ) + "]"
+                )
                 print(
                     f"[{model_name}/{variant}/{phase}] "
                     f"{s['n_nodes']} nodes, {s['n_edges']} edges | "
+                    f"valid={flag} alt_viol={v['n_alternation_violations']} | "
                     f"ex={s['n_examples']} | "
                     f"calls={s['api_calls']} hits={s['cache_hits']} | "
                     f"tok={s['tokens_in']}in/{s['tokens_out']}out | "

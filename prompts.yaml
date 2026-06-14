@@ -1,57 +1,184 @@
-# DAG-generation prompts for the LLM panel (TODO 5).
+# DAG-generation prompts for the LLM panel (TODO 5) — PHASE-CONDITIONED (v2).
 #
 # Five sequential prompts that drive an LLM through generating, critiquing,
-# revising, finalising, and merging a Prolonged-Exposure dialogue-flow DAG.
+# revising, finalising, and merging a Prolonged-Exposure dialogue-flow DAG for a
+# SPECIFIC PE phase.
 #
 # Prompt variants (per EXPLAINER.md TODO 5):
-#   V1 = prompt 1 alone
-#   V2 = prompts 1-5 fused into one call
-#   V3 = prompts 1-5 run sequentially
+#   v1 = prompt 1 alone
+#   v2 = prompts 1-5 fused into one call
+#   v3 = prompts 1-5 run sequentially
 #
-# prompt_5 contains template slots ({{design_guidelines}}, {{thousand_voices_data}})
-# filled at runtime with ~50 randomly sampled TV training conversations.
+# Runtime template slots, filled per-phase by generate_llm_dags.py:
+#   {{phase_id}} {{phase_name}} {{phase_description}} {{phase_moves}}  (from `phases:` below)
+#   {{design_guidelines}} {{thousand_voices_data}}                     (prompt 5 only)
+#
+# ⚠ The phase descriptions below are drafted from project notes, NOT a PE manual.
+#   They need a clinical sanity check (Francesca) before the final full-panel run.
 
-version: 1
+version: 2
+
+phases:
+  P5:
+    name: Orientation
+    description: >
+      The therapist orients the client to the imaginal-exposure procedure: explains what will
+      happen, gives the rationale (repeatedly revisiting the memory in a safe setting reduces
+      distress and enables emotional processing), sets expectations, confirms readiness/consent,
+      and instructs the client on the mechanics (eyes closed, recount in the first person and
+      present tense). Focus is on SETTING UP the exposure, not yet doing it.
+    moves: |
+      - greet_and_check_in
+      - explain_procedure_and_rationale
+      - set_expectations
+      - instruct_mechanics (eyes closed, first person, present tense)
+      - confirm_readiness_and_consent
+  P6:
+    name: SUDS Monitoring
+    description: >
+      The therapist elicits Subjective Units of Distress Scale (SUDS, 0-100) ratings — a baseline
+      and then periodically THROUGHOUT the exposure — and uses the trajectory to pace the work
+      (continue, slow down, or briefly ground if distress is too high). The defining move is the
+      recurring, explicit distress check-in tied to the ongoing narrative.
+    moves: |
+      - greet_and_check_in
+      - ask_suds_baseline
+      - prompt_continue_narrative
+      - ask_suds_midexposure
+      - respond_to_high_distress (brief grounding / slow down)
+      - respond_to_decreasing_distress (continue / deepen)
+      - validate_and_reassure
+      - wrap_up_and_close
+  P7:
+    name: Reinforcing Exposure
+    description: >
+      The therapist keeps the client engaged with the memory: validates effort, encourages staying
+      with it rather than avoiding, praises engagement, and provides supportive containment so the
+      client tolerates the distress and remains in the exposure. Focus is SUSTAINING exposure, not
+      introducing new material.
+    moves: |
+      - encourage_staying_with_memory
+      - validate_effort_and_praise_engagement
+      - normalize_distress
+      - provide_supportive_containment
+      - gently_redirect_avoidance
+  P8:
+    name: Eliciting Thoughts & Feelings
+    description: >
+      The therapist prompts the client to articulate the thoughts, beliefs, and emotions attached
+      to the memory (e.g. "what went through your mind then?", "what does that say about you
+      now?"), surfacing the cognitions that maintain the distress.
+    moves: |
+      - ask_thoughts_during_event
+      - ask_current_meaning_or_belief
+      - reflect_emotion
+      - surface_maintaining_cognition
+  P10:
+    name: Full Imaginal Exposure
+    description: >
+      The complete exposure protocol end to end: start the narrative, prompt to continue, ask for
+      sensory and bodily detail, check SUDS, instruct grounding if distress peaks, loop through the
+      memory repeatedly, then debrief. The richest, most structured phase.
+    moves: |
+      - begin_narrative
+      - prompt_continue
+      - ask_sensory_and_bodily_detail
+      - ask_suds
+      - instruct_grounding_if_peak
+      - debrief
+  P11:
+    name: Processing
+    description: >
+      Post-exposure discussion: the therapist helps the client reflect on what surfaced, draw new
+      perspectives, make meaning, and consolidate insight — moving from re-experiencing to
+      cognitive integration.
+    moves: |
+      - invite_reflection
+      - draw_new_perspective
+      - make_meaning
+      - consolidate_insight
 
 prompts:
   - id: 1
     name: generate
     text: |
-      Given the context of mental health/therapy grounding, design a directed acyclic dialog flow suitable for visualization with mermaid.js. This flow should depict the nuances and potential branches of interactions between a bot and a user. Please adhere to the following guidelines:
+      You are designing a dialogue flow for Prolonged Exposure (PE) therapy, specifically the
+      **{{phase_name}}** phase ({{phase_id}}).
+
+      Phase focus:
+      {{phase_description}}
+
+      Representative therapist moves in this phase (use as a guide, not a fixed list):
+      {{phase_moves}}
+
+      Design a directed acyclic dialogue flow for THIS PHASE ONLY, suitable for visualization with
+      mermaid.js. The flow should depict the nuances and potential branches of interactions between a
+      bot (therapist) and a user (client) as they occur during the {{phase_name}} phase. Stay within
+      the scope of this phase — do not drift into a generic greet/validate/coping-menu chatbot flow;
+      the phase-specific therapist actions above must be clearly represented and distinguishable.
+
+      Please adhere to the following guidelines:
 
       Nodes Definition: Use distinct nodes to represent the bot ("B") and the user ("U").
 
-      High-Level Dialog Action: Each node should encapsulate that segment's core sentiment or function in the conversation, relevant to mental health/therapy. It should be a label for the node representing a high-level dialogue action and not just the dialog.
+      High-Level Dialog Action: Each node should encapsulate that segment's core sentiment or function
+      in the conversation, relevant to the {{phase_name}} phase. It should be a label for the node
+      representing a high-level dialogue action and not just the dialog.
 
-      Flow & Directionality: Create directed connections between nodes to represent the progression of the conversation. The dialogue should flow from one node to potentially multiple nodes, allowing for various conversational turns.
+      Flow & Directionality: Create directed connections between nodes to represent the progression of
+      the conversation. The dialogue should flow from one node to potentially multiple nodes, allowing
+      for various conversational turns.
 
-      Diverse Conversational Possibilities: Ensure that bot nodes can lead to multiple user nodes and vice versa. This should account for various user responses or bot prompts, showcasing the range of interactions possible within mental health/therapy.
+      Diverse Conversational Possibilities: Ensure that bot nodes can lead to multiple user nodes and
+      vice versa, accounting for various user responses or bot prompts within the {{phase_name}} phase.
 
-      Acyclic Structure: The dialog flow must not have loops or cyclic pathways. If a similar action or sentiment arises later in the conversation, introduce a new node to represent it, rather than looping back to an earlier node.
+      Acyclic Structure: The dialog flow must not have loops or cyclic pathways. If a similar action or
+      sentiment arises later, introduce a NEW node rather than looping back to an earlier one.
 
-      Mermaid.js Compatibility: Ensure that the constructed flow is adherent to mermaid.js graph notation, guaranteeing its seamless rendering.
+      Mermaid.js Compatibility: Ensure the flow adheres to mermaid.js graph notation for seamless
+      rendering.
 
-      Considering the guidelines, craft a dialogue flow focused on mental health/therapy. The bot always begins by greeting the user and asking for what they want. The graph should be connected. The bot and user nodes should be in different colors. A bot node is only followed by user nodes and user nodes are by bot nodes.
+      Craft a dialogue flow focused on the {{phase_name}} phase of PE therapy. The bot always begins by
+      greeting/orienting the user appropriately for this phase. The graph must be connected. Bot and user
+      nodes should be in different colors. A bot node is only followed by user nodes and user nodes only
+      by bot nodes.
 
   - id: 2
     name: critique
     text: |
-      Based on the below evaluation criteria, suggest some improvements and provide concise + actionable feedback on the flow just generated:
+      Based on the evaluation criteria below, suggest improvements and provide concise, actionable
+      feedback on the flow just generated for the **{{phase_name}}** ({{phase_id}}) phase:
 
-      Optimality: Check for redundancy. Ensure that nodes aren't replicating the same or very similar dialog actions, even if they arise at different points in the conversation.
+      Phase Fidelity: Does every part of the flow belong to the {{phase_name}} phase? Flag any node that
+      is generic supportive-chatbot filler (e.g. broad "offer coping menu", "safety check") rather than a
+      move specific to this phase. Are the defining actions of this phase ({{phase_moves}}) all present
+      and distinguishable?
 
-      Clarity of High-Level Dialog Action: For every node, evaluate if the high-level dialog action is clear and meaningful. Avoid nodes that are vague or overly complex. Can someone unfamiliar with the domain understand the flow and interactions by looking at the flow?
+      Optimality: Check for redundancy. Ensure nodes aren't replicating the same or very similar dialog
+      actions at different points.
 
-      Extensiveness: Does the flow account for diverse conversational possibilities? Are all the nodes interconnected to the graph? Does the flow cover all major high level topics and interactions within the given domain?
+      Clarity of High-Level Dialog Action: For every node, is the high-level dialog action clear and
+      meaningful? Could someone unfamiliar with the domain understand the flow? Avoid vague or overly
+      complex nodes.
 
-      Representativeness of the Domain:
-      Bot Nodes (B): Do the bot nodes represent clear and unambiguous actions? Are they too broad or too specific?
-      User Nodes (U): Do user nodes accurately capture an adequate range of potential user responses and inquiries relevant to the domain?
+      Extensiveness: Does the flow cover the diverse conversational possibilities of this phase? Are all
+      nodes interconnected? Does it cover the major interactions within the {{phase_name}} phase?
+
+      Representativeness:
+      Bot Nodes (B): Do they represent clear, unambiguous therapist actions — neither too broad nor too
+      specific?
+      User Nodes (U): Do they capture an adequate range of client responses relevant to this phase?
 
   - id: 3
     name: revise
     text: |
-      Taking into consideration the feedback and the original design guidelines - keep it in directed acyclic graph structure and make sure all new components are labeled and connected to the graph correctly - revise the flow. Ensure your revised flow addresses the identified areas of improvement while still adhering to the primary instructions for flow construction. Make sure to account for all new nodes including merged nodes and their labels/colors. Make sure all user nodes connect with bot nodes and bot nodes are the end of the conversations. Give your updates in the below format:
+      Taking into account the feedback and the original design guidelines — keep a directed acyclic graph
+      structure, ensure all new components are labelled and connected, and keep the flow specific to the
+      **{{phase_name}}** ({{phase_id}}) phase (remove or merge any generic, non-phase-specific nodes the
+      critique identified) — revise the flow. Ensure your revision addresses the identified improvements
+      while still adhering to the primary construction rules. Account for all new nodes (including merged
+      nodes) and their labels/colors. All user nodes must connect to bot nodes, and bot nodes end the
+      conversation. Give your updates in the format below:
 
       'split_nodes':
       # 'NodeToSplit': ['NewNode1', 'NewNode2', ...],
@@ -74,16 +201,35 @@ prompts:
   - id: 4
     name: finalize
     text: |
-      Intrinsic Flow Finalization Prompt
+      Clean up the flow to produce the FINAL flow for the **{{phase_name}}** ({{phase_id}}) phase. Address
+      the remaining improvements while adhering to all construction rules. Specifically, the final flow MUST
+      satisfy ALL of the following — fix any violation before returning:
 
-      Clean up the flow to create a final flow. Ensure your revised flow addresses the identified areas of improvement while still adhering to the primary instructions for flow construction. Get rid of hanging/loose user nodes (user nodes with no output), have graph in directed acyclic structure, bot nodes shouldn't be connected to other bot nodes, and user nodes shouldn't be connected to other user nodes. All nodes should have input/output except begin and end nodes, one node shouldn't point to another node more than once, and make sure all bot nodes are correctly colored
+      - Acyclic: no loops or cyclic pathways anywhere. If an action recurs, use a new node.
+      - Connected: every node is reachable from the start node; no isolated nodes and no disconnected
+        fragments.
+      - Strict alternation: bot nodes are never connected directly to other bot nodes; user nodes are never
+        connected directly to other user nodes.
+      - No hanging user nodes (every user node has an outgoing edge); only bot nodes may end the conversation.
+      - Every node except the begin/end nodes has both an input and an output.
+      - No duplicate edges (one node points to another at most once).
+      - All bot nodes correctly colored; the flow stays specific to the {{phase_name}} phase.
+
+      Return ONLY the final flow as a single ```mermaid fenced code block.
 
   - id: 5
     name: merge
     text: |
-      Given the two dialogue flows for the mental health/therapy bot. One flow is LLM generated and the other is from data examples, merge all the unique elements of the two flows and do not duplicate similar elements. Merge the two flows based on the following design guidelines:
+      You are given two dialogue flows for the **{{phase_name}}** ({{phase_id}}) phase of PE therapy. One
+      flow is LLM-generated and the other is derived from real data examples. Merge all unique elements of
+      the two flows without duplicating similar elements, keeping the result specific to the {{phase_name}}
+      phase. Merge based on the following design guidelines:
+
       < Design guidelines >
       {{design_guidelines}}
 
       < Thousand Voices Data >
       {{thousand_voices_data}}
+
+      Return the merged flow as a single ```mermaid fenced code block, preserving the directed-acyclic,
+      connected, strictly bot/user-alternating structure.

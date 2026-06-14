@@ -1,4 +1,3 @@
-from sentence_transformers import SentenceTransformer
 import numpy as np
 
 from .types import IntentBucket
@@ -6,6 +5,11 @@ from .types import IntentBucket
 
 class EmbeddingCache:
     def __init__(self, model_name='all-MiniLM-L6-v2'):
+        # Imported lazily: loading sentence-transformers pulls in torch
+        # (~1-2 GB RAM). Modules that only reuse helper classes from scripts
+        # importing this file (e.g. generate_llm_dags) shouldn't pay that cost.
+        from sentence_transformers import SentenceTransformer
+
         self.model = SentenceTransformer(model_name)
         self._cache: dict[str, np.ndarray] = {}
 

@@ -1,3 +1,4 @@
+
 """Versioned, deterministic train/test splits for STAR and TV.
 
 Splits are stored as JSON: a mapping from stratum key to {"train": [ids],
