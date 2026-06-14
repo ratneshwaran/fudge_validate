@@ -1,5 +1,12 @@
 # Progress Tracker
 
+> **Source of truth (2026-06-06): `EXPLAINER.md` §13 is the live TODO tracker; `METHODOLOGY.md` (v0.2) is the locked plan.**
+> This file keeps the detailed Phase 1–4 (STAR) history. Phases below are the
+> *old* numbering from before the supervisor's 2026-05-17 two-step methodology;
+> they map onto Step 1 (metric validation). The TV work and the LLM-DAG
+> comparison (Step 2) are summarised at the bottom under "Phase 5+" — see
+> EXPLAINER.md for the authoritative TODO 1–11 status.
+
 Working doc — tracks current state and upcoming decisions. The formal write-up
 lives in `progress_summary.tex` and `VALIDATION_REPORT.md`; this file is for
 day-to-day "what am I doing" reference.
@@ -173,17 +180,28 @@ Thousand Voices is unblocked.
 
 ---
 
-## Phase 5 — Apply to Thousand Voices ⏳ UNBLOCKED
+## Phase 5+ — Thousand Voices + LLM-DAG comparison
 
-Phase 4 confirmed LLM labeling not only preserves but improves discrimination,
-so the same pipeline transfers directly to Thousand Voices (mental health).
-No gold labels needed.
+Re-numbered against the locked two-step methodology (`METHODOLOGY.md` v0.2).
+Authoritative status: `EXPLAINER.md` §13. Summary as of 2026-06-06:
 
-Remaining dependencies:
-- Thousand Voices dataset loader (not yet in repo) — needs to mirror
-  `load_star_dialogues` so it produces `Conversation` objects with
-  `dialogue_id`, `task`, and `utterances`. The labeling script and the
-  validation script will both work as-is once that exists.
+**Step 1 — validate FuDGE as a metric ✅ COMPLETE**
+- TV loader (`load_thousand_voices_dialogues`) landed; mirrors `load_star_dialogues`.
+- TODO 2 — TV agent-turn labelling (per-phase taxonomy, agent turns only):
+  P5/P6/P7 complete (500/500 each); P8 partial, P10 smoke, P11 not started
+  (pending OpenAI top-up).
+- TODO 3 — TV 70/30 stratified split (`data/splits/TV_v1.json`).
+- TODO 4 — TV prefix-tree discrimination: **3/3 pass** (P5/P6/P7) at
+  Bonferroni α = 3.3×10⁻³, ratios 1.46–1.82×. Metric validated on clinical data.
+
+**Step 2 — use the validated metric to rank LLMs ⏳ IN PROGRESS**
+- TODO 5 — LLM DAG generation ✅: 36 DAGs on disk
+  (`deepseek-v3.2`, `gpt-5.1`, `gpt-oss-20b`, `kimi-k2-0905` × v1/v2/v3 ×
+  P5/P6/P7) via `scripts/generate_llm_dags.py` + `prompts.yaml` (OpenRouter).
+- TODO 6 (canonicalise labels) → **next**, then TODO 7 (cluster-then-recentroid),
+  TODO 8 (FuDGE on LLM DAGs), TODO 9 (AutoEval-ToD Domain Compliance, parallel),
+  TODO 10 (cross-LLM comparison table = the deliverable), TODO 11 (clinician, optional).
+- Everything past TODO 5 currently scopes to P5/P6/P7.
 
 ---
 
@@ -215,12 +233,18 @@ pipeline:
 
 | File | What it is |
 |---|---|
+| `METHODOLOGY.md` | **Locked plan (v0.2)** — two-step methodology |
+| `EXPLAINER.md` | **Live TODO 1–11 tracker** + plain-language walkthrough |
 | `VALIDATION_REPORT.md` | Phase 1 results, methodology, comparison to paper |
 | `progress_summary.tex` | Formal write-up (LaTeX, paper-style) |
 | `PROGRESS.md` | This file — working tracker |
 | `scripts/llm_label_star.py` | Phase 2 pipeline (single-prompt default) |
-| `src/fudge/data_loader.py` | Phase 3 loader (load_llm_labels, label_source) |
+| `scripts/llm_label_tv.py` | TV per-phase agent-turn labelling (TODO 2) |
+| `scripts/generate_llm_dags.py` + `prompts.yaml` | LLM DAG generation (TODO 5) |
+| `src/fudge/data_loader.py` | Phase 3 loader (load_llm_labels, label_source) + TV loader |
 | `experiments/validate_discrimination.py` | Phase 1 / 4 experiment runner |
+| `experiments/star_v2_validation.py` | STAR re-validation, 70/30 split (TODO 1) |
+| `experiments/tv_prefix_tree_discrimination.py` | TV prefix-tree discrimination (TODO 4) |
 | `tests/test_llm_label_smoke.py` | Phase 2 smoke tests |
 | `tests/test_label_source.py` | Phase 3 plumbing tests |
 | `experiments/significance.py` | Mann-Whitney U test across all (task × regime) cells |
