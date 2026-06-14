@@ -1,0 +1,132 @@
+{
+  "labels": {
+    "orient_to_imaginal_exposure": {
+      "label": "Therapist orients the client to the imaginal exposure procedure",
+      "positives": {
+        "texts": [
+          "Mr. Lee, today we'll be starting imaginal exposure. How are you feeling about that?",
+          "We'll go at your pace. You'll describe the event in present tense. I'll guide you throughout. How does that sound?",
+          "This exercise is designed to help you process the trauma. What questions do you have?",
+          "You may feel strong emotions or physical sensations. This is normal. We'll work through it together. How do you feel about that?",
+          "Absolutely. You're in control. We can pause anytime. Shall we start with a breathing exercise?"
+        ],
+        "distances": [
+          0.7073293328285217,
+          0.9536096453666687,
+          0.6924504041671753,
+          0.9124942421913147,
+          0.952934741973877
+        ],
+        "mean": 0.8437636733055115,
+        "std": 0.11850602144223844
+      },
+      "negatives": {
+        "texts": [
+          "What's your SUDS rating now?",
+          "It's common to feel that way. How might this connect to your day-to-day life?",
+          "You should be proud. Let's end the exercise here. How are you feeling overall?",
+          "Those sound like excellent steps. How do you feel about our session today?",
+          "Thank you for sharing that. What do you think about these realizations?"
+        ],
+        "distances": [
+          1.0422742366790771,
+          0.9267818927764893,
+          0.941933810710907,
+          0.9335139393806458,
+          0.9303087592124939
+        ],
+        "mean": 0.9549625277519226,
+        "std": 0.04394332808845917
+      },
+      "gap": 0.11119885444641109,
+      "passed": false
+    },
+    "elicit_suds_rating": {
+      "label": "Therapist elicits the client's SUDS rating during exposure",
+      "positives": {
+        "texts": [
+          "You're doing well. What's your SUDS now?",
+          "How are you feeling right now? What's your SUDS?",
+          "What's your SUDS rating now?",
+          "How are you feeling now? What's your SUDS?",
+          "That's great progress. How would you rate your SUDS now?"
+        ],
+        "distances": [
+          0.6878368854522705,
+          0.6672287583351135,
+          0.5012791156768799,
+          0.6353713274002075,
+          0.5596958994865417
+        ],
+        "mean": 0.6102823972702026,
+        "std": 0.06975349489009926
+      },
+      "negatives": {
+        "texts": [
+          "Mr. Lee, today we'll be starting imaginal exposure. How are you feeling about that?",
+          "How did that feel, physically?",
+          "That's a great goal. What's one small step you could take this week?",
+          "You may feel strong emotions or physical sensations. This is normal. We'll work through it together. How do you feel about that?",
+          "Your dedication is commendable. Let's begin with deep breaths. In through your nose, out through your mouth."
+        ],
+        "distances": [
+          0.9117794036865234,
+          0.9098801016807556,
+          0.9926390051841736,
+          0.8854100704193115,
+          0.9099401831626892
+        ],
+        "mean": 0.9219297528266907,
+        "std": 0.03667549327064058
+      },
+      "gap": 0.31164735555648804,
+      "passed": true
+    },
+    "process_thoughts_after_exposure": {
+      "label": "Therapist processes the client's thoughts and feelings after exposure",
+      "positives": {
+        "texts": [
+          "How are you feeling after that imaginal exposure, Mr. Lee?",
+          "That's understandable. What stood out to you most?",
+          "It's common to feel that way. How might this connect to your day-to-day life?",
+          "Thank you for sharing that. What do you think about these realizations?",
+          "That's a positive perspective. How do you feel about continuing this work?"
+        ],
+        "distances": [
+          0.7112560272216797,
+          0.9174781441688538,
+          0.711920976638794,
+          0.7342777252197266,
+          0.7545415163040161
+        ],
+        "mean": 0.7658948779106141,
+        "std": 0.07746562566283616
+      },
+      "negatives": {
+        "texts": [
+          "What's your SUDS now?",
+          "We'll go at your pace. You'll describe the event in present tense. I'll guide you throughout. How does that sound?",
+          "Let's begin our imaginal exposure exercise. Can you describe the airplane crash scene and give me your initial SUDS rating?",
+          "Your dedication is commendable. Let's begin with deep breaths. In through your nose, out through your mouth.",
+          "Excellent. Remember, you're safe here. Describe where you were before boarding the plane."
+        ],
+        "distances": [
+          1.0271202325820923,
+          0.9016177654266357,
+          0.8643726110458374,
+          0.8080505132675171,
+          0.9814016819000244
+        ],
+        "mean": 0.9165125608444213,
+        "std": 0.07892920896437296
+      },
+      "gap": 0.15061768293380728,
+      "passed": false
+    }
+  },
+  "summary": {
+    "all_pass": false,
+    "criterion": "neg_mean - pos_mean >= 0.20 for every label",
+    "verdict": "FuDGE NOT viable on TV \u2014 abstract labels do not separate. Fall back to AutoEval-ToD Domain Compliance only."
+  }
+}
