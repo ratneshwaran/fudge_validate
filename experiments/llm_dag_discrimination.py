@@ -31,6 +31,7 @@ from fudge.data_loader import load_thousand_voices_dialogues
 from fudge.embeddings import EmbeddingCache
 from fudge.fudge_efficient import fudge_dag
 from fudge.llm_dag import build_flow_from_llm_dag, deserialize_flow
+from fudge.segment import segment_conversation
 from fudge.splits import load_split, split_conversations
 
 DEFAULT_TV_DIR = "data/thousand-voices-trauma/ThousandVoicesOfTrauma"
@@ -93,7 +94,7 @@ def _load_phase_convs(tv_dir, split_meta, cache):
 
 
 def evaluate(model, variant, phase, dags_root, phase_convs, emb, from_aligned,
-             suffix, reassign_passes):
+             suffix, reassign_passes, segment=False, min_run=2):
     cell_dir = Path(dags_root) / model / variant / phase
     test = phase_convs[phase]["test"]
     negatives = []
@@ -125,6 +126,14 @@ def evaluate(model, variant, phase, dags_root, phase_convs, emb, from_aligned,
         n_train = len(phase_convs[phase]["train"])
     costs = FudgeCosts(emb, all_buckets)
 
+    # --segment: collapse each conversation to stage-level segments against this
+    # DAG's buckets before scoring (removes the length confound on the input side
+    # without touching FuDGE). Applied to positives and negatives alike.
+    if segment:
+        test = [segment_conversation(c, all_buckets, emb, min_run=min_run) for c in test]
+        negatives = [segment_conversation(c, all_buckets, emb, min_run=min_run)
+                     for c in negatives]
+
     pos = _score(test, flow, costs, desc=f"{variant}/{phase}/in")
     neg = _score(negatives, flow, costs, desc=f"{variant}/{phase}/out")
 
@@ -134,10 +143,14 @@ def evaluate(model, variant, phase, dags_root, phase_convs, emb, from_aligned,
         "variant": variant, "phase": phase,
         "n_train_align": n_train, "n_test_in": len(test), "n_test_out": len(negatives),
         **{f"dag_{k}": v for k, v in bstats.items()},
+        "segmented": segment, "min_run": min_run if segment else None,
         "in_mean": float(pos.mean()), "in_std": float(pos.std(ddof=1)) if len(pos) > 1 else 0.0,
         "out_mean": float(neg.mean()), "out_std": float(neg.std(ddof=1)) if len(neg) > 1 else 0.0,
         **mw, **boot,
         "in_scores": pos.tolist(), "out_scores": neg.tolist(),
+        # post-segmentation lengths (segment counts) for the length-confound check
+        "in_seg_lens": [len(c.utterances) for c in test] if segment else None,
+        "out_seg_lens": [len(c.utterances) for c in negatives] if segment else None,
     }
 
 
@@ -156,9 +169,18 @@ def main():
     ap.add_argument("--reassign-passes", type=int, default=0,
                     help="Selects which aligned_r<N>.json to score (--from-aligned) or how "
                          "many re-assignment passes to run inline. 0 = one-pass.")
+    ap.add_argument("--segment", action="store_true",
+                    help="Collapse each conversation to stage-level segments against the DAG "
+                         "buckets before scoring (granularity-normalised FuDGE).")
+    ap.add_argument("--min-run", type=int, default=2,
+                    help="Segmentation smoothing: runs shorter than this flanked by the same "
+                         "bucket are absorbed. Only used with --segment.")
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
     suffix = "" if args.reassign_passes == 0 else f"_r{args.reassign_passes}"
+    # aligned-flow lookup uses `suffix` (reassign passes only); the output filename
+    # also encodes segmentation so segmented runs don't overwrite raw ones.
+    out_suffix = suffix + ("_seg" if args.segment else "")
 
     split_meta = load_split(args.split_path)
     print(f"Loaded split {split_meta['version']}: "
@@ -171,7 +193,8 @@ def main():
         print(f"\n=== {args.model} / {variant} ===")
         for phase in args.phases:
             r = evaluate(args.model, variant, phase, args.dags_root, phase_convs, emb,
-                         args.from_aligned, suffix, args.reassign_passes)
+                         args.from_aligned, suffix, args.reassign_passes,
+                         segment=args.segment, min_run=args.min_run)
             results.append(r)
             if r.get("skipped"):
                 print(f"  [skip] {phase}: {r['skipped']}"); continue
@@ -208,10 +231,11 @@ def main():
               f"(mean ratio {variant_summ[best]['mean_ratio']:.2f}x) "
               f"[Bonferroni alpha={bonf:.4f}]")
 
-    out = Path(args.out) if args.out else Path(f"experiments/llm_dag_discrimination_{args.model}{suffix}.json")
+    out = Path(args.out) if args.out else Path(f"experiments/llm_dag_discrimination_{args.model}{out_suffix}.json")
     out.parent.mkdir(parents=True, exist_ok=True)
     with open(out, "w", encoding="utf-8") as f:
         json.dump({"model": args.model, "bonferroni_alpha": bonf,
+                   "segmented": args.segment, "min_run": args.min_run if args.segment else None,
                    "variant_summary": variant_summ, "results": results}, f, indent=2)
     print(f"\nWrote {out}")
 

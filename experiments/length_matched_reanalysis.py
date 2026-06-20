@@ -130,8 +130,22 @@ def main():
     ap.add_argument("--bin-width", type=int, default=3)
     ap.add_argument("--min-per-bin", type=int, default=5)
     ap.add_argument("--n-perm", type=int, default=10000)
+    ap.add_argument("--results", nargs="+", default=None,
+                    help="Override result files as label=path. Use this to point at the "
+                         "--segment outputs, e.g. "
+                         "'gpt-oss-seg=experiments/llm_dag_discrimination_gpt-oss-20b_r5_seg.json'. "
+                         "Lengths are still the ORIGINAL conversation lengths, so this measures "
+                         "whether the segmented score still tracks length (it should not).")
     ap.add_argument("--out", default="experiments/length_matched_reanalysis.json")
     args = ap.parse_args()
+
+    if args.results:
+        result_files = []
+        for spec in args.results:
+            label, sep, path = spec.partition("=")
+            result_files.append((label, path) if sep else (Path(path).stem, path))
+    else:
+        result_files = RESULT_FILES
 
     split_meta = load_split(args.split_path)
     split_order = list(split_meta["splits"].keys())
@@ -141,7 +155,7 @@ def main():
         print(f"  {ph}: n={len(L)} mean_len={np.mean(L):.1f}")
 
     all_results = []
-    for name, fn in RESULT_FILES:
+    for name, fn in result_files:
         if not Path(fn).exists():
             print(f"\n[skip] {name}: {fn} not found")
             continue

@@ -32,6 +32,7 @@ from fudge.data_loader import load_thousand_voices_dialogues
 from fudge.embeddings import EmbeddingCache
 from fudge.fudge_efficient import fudge_dag
 from fudge.llm_dag import deserialize_flow
+from fudge.segment import segment_conversation
 from fudge.splits import load_split, split_conversations
 
 DEFAULT_TV_DIR = "data/thousand-voices-trauma/ThousandVoicesOfTrauma"
@@ -56,9 +57,14 @@ def main():
     ap.add_argument("--tv-dir", default=DEFAULT_TV_DIR)
     ap.add_argument("--split-path", default=SPLIT_PATH)
     ap.add_argument("--dags-root", default=DAGS_ROOT)
+    ap.add_argument("--segment", action="store_true",
+                    help="Collapse each conversation to stage-level segments against the scoring "
+                         "flow's buckets before scoring (granularity-normalised FuDGE).")
+    ap.add_argument("--min-run", type=int, default=2)
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
     suffix = "" if args.reassign_passes == 0 else f"_r{args.reassign_passes}"
+    out_suffix = suffix + ("_seg" if args.segment else "")
 
     split_meta = load_split(args.split_path)
     emb = EmbeddingCache()
@@ -91,7 +97,11 @@ def main():
     for fp in flow_phases:
         flow, costs = flows[fp]
         for tp in args.phases:
-            M[fp][tp] = float(_norm_scores(test_by_phase[tp], flow, costs,
+            convs = test_by_phase[tp]
+            if args.segment:
+                convs = [segment_conversation(c, costs.all_buckets, emb, min_run=args.min_run)
+                         for c in convs]
+            M[fp][tp] = float(_norm_scores(convs, flow, costs,
                                            desc=f"flow {fp} / test {tp}").mean())
 
     # ---- print matrix (rows = flow/DAG, cols = test convs) ----
@@ -122,11 +132,12 @@ def main():
               f"gap={gap:+.3f}  {'self-best' if diag_is_min else 'CONFUSED w/ '+nearest_tp}")
 
     out = Path(args.out) if args.out else Path(
-        f"experiments/phase_confusion_{args.model}_{args.variant}{suffix}.json")
+        f"experiments/phase_confusion_{args.model}_{args.variant}{out_suffix}.json")
     out.parent.mkdir(parents=True, exist_ok=True)
     with open(out, "w", encoding="utf-8") as f:
         json.dump({"model": args.model, "variant": args.variant,
                    "reassign_passes": args.reassign_passes,
+                   "segmented": args.segment, "min_run": args.min_run if args.segment else None,
                    "phases": args.phases, "matrix": M}, f, indent=2)
     print(f"\nWrote {out}")
 

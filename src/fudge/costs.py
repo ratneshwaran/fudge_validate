@@ -47,7 +47,10 @@ class FudgeCosts:
         if cache_key in self._d1_cache:
             return self._d1_cache[cache_key]
 
-        u_emb = self.emb.encode(utterance.text)
+        # Use a precomputed embedding when the utterance carries one (collapsed
+        # segments from segment_conversation); otherwise encode the text.
+        u_emb = (utterance.embedding if utterance.embedding is not None
+                 else self.emb.encode(utterance.text))
 
         if self.method == 'centroid':
             result = cosine_distance(self._get_centroid(bucket), u_emb)
