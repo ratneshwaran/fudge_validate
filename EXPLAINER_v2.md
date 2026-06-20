@@ -1,11 +1,11 @@
 # EXPLAINER v2 — what actually happened in Step 2 (plain-language, personal notes)
 
 **Written:** 2026-06-07. **For:** me, future me, and nobody else.
-**Relationship to other docs:** `EXPLAINER.md` explains the project fundamentals (what FuDGE is,
+**Relationship to other docs:** `archive/EXPLAINER.md` explains the project fundamentals (what FuDGE is,
 what a dialogue-flow DAG is, why the two-step methodology). Read that first if rusty. This file
 explains, in simple terms, what was *done* in the two Step-2 sessions (June 6–7) and what we
 learned — including the part where our pilot results turned out to be measuring the wrong thing.
-`HANDOVER.md` (with its 2026-06-07 addendum) is the operational truth; `SUPERVISOR_UPDATE_2026-06-07.md`
+`HANDOVER.md` (with its 2026-06-07 addendum) is the operational truth; `archive/SUPERVISOR_UPDATE_2026-06-07.md`
 is the formal version of this story.
 
 ---

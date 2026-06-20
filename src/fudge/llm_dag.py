@@ -1,5 +1,5 @@
 """TODO 7 — build a FuDGE DialogueFlow from an LLM-generated DAG via
-cluster-then-recentroid bucket population (EXPLAINER.md §11).
+cluster-then-recentroid bucket population (archive/EXPLAINER.md §11).
 
 Counterpart to data_loader.build_flow_from_conversations (which builds the
 prefix-tree *reference* flow). Here the graph topology comes from the LLM's DAG
@@ -45,7 +45,7 @@ def build_flow_from_llm_dag(
     dag: {"nodes": [{id, actor, label}], "edges": [{from, to}]}.
     train_convs: phase TRAINING conversations (never test — no leakage).
 
-    Cluster-then-recentroid (EXPLAINER.md §11). Each same-actor training
+    Cluster-then-recentroid (archive/EXPLAINER.md §11). Each same-actor training
     utterance is assigned to its nearest node centroid (embeddings are normalised,
     so cosine = dot product). With `reassign_passes=0` the centroids are the node
     LABEL anchors (one-pass NN — the original behaviour). With reassign_passes>0

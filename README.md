@@ -6,7 +6,7 @@ LLM-based intent-labeling pipeline that lets the metric work without gold
 annotations.
 
 The formal write-up lives in `progress_summary.tex` and `VALIDATION_REPORT.md`.
-`PROGRESS.md` tracks day-to-day status.
+`archive/PROGRESS.md` tracks day-to-day status.
 
 ## Layout
 

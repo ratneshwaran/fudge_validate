@@ -2,15 +2,15 @@
 
 For each model x prompt-variant x PE phase, drive an LLM through the
 DAG-generation prompts in `prompts.yaml` and save the resulting dialogue-flow
-DAG as Mermaid (`dag.mmd`) plus a parsed `dag.json` (nodes/edges), per the
-format in PIPELINE.md.
+DAG as Mermaid (`dag.mmd`) plus a parsed `dag.json` (nodes/edges) of the form
+{"nodes": [{"id", "actor", "label"}], "edges": [{"from", "to"}]}.
 
 Routing (option C, per user 2026-06-02): all four models go through OpenRouter
 with a single OPENROUTER_API_KEY. Edit MODEL_REGISTRY to repoint a model at a
 different OpenAI-compatible endpoint — the client only needs base_url + an
 api-key env var, so swapping providers is a one-line change.
 
-Prompt variants (EXPLAINER.md TODO 5):
+Prompt variants (archive/EXPLAINER.md TODO 5):
   v1  = prompt 1 alone (one call)
   v2  = prompts 1-5 fused into a single call
   v3  = prompts 1-5 run sequentially as a multi-turn conversation

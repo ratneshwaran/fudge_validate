@@ -1,6 +1,6 @@
 # Design note — fixing the metric/DAG granularity mismatch
 
-**Date:** 8 June 2026. **Companion to:** `SUPERVISOR_UPDATE_2026-06-07.md` (which states the
+**Date:** 8 June 2026. **Companion to:** `archive/SUPERVISOR_UPDATE_2026-06-07.md` (which states the
 problem and gives the three-way A/B/C decision). This note goes deeper on the two options that
 involve *changing how we score* — modifying FuDGE (Option C) and using an LLM judge (Option B) —
 with enough implementation detail to choose between them.

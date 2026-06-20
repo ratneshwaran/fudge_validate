@@ -262,7 +262,7 @@ The real gap is that the LLM DAGs are *summaries*, and FuDGE wants *turn-level* 
 
 ## Phase 10 — Where it stands now & the open decision (2026-06-08)
 
-I wrote this up for my supervisor (`SUPERVISOR_UPDATE_2026-06-07.md`). The core question is how to
+I wrote this up for my supervisor (`archive/SUPERVISOR_UPDATE_2026-06-07.md`). The core question is how to
 resolve the **mismatch** (FuDGE wants turn-level DAGs; LLMs drew summary DAGs):
 
 - **Option A — deeper DAGs, keep FuDGE.** Prompt for turn-level DAGs whose paths span real session
@@ -299,6 +299,6 @@ signal is the LLM vs. the alignment); and generate **≥3 DAGs per cell** for er
 *Key files: `src/fudge/` (engine: `fudge_efficient.py`/`fudge_dag`, `costs.py`, `embeddings.py`,
 `llm_dag.py`); `experiments/` (`tv_prefix_tree_discrimination.py`, `align_llm_dags.py`,
 `llm_dag_discrimination.py`, `phase_confusion.py`, `length_matched_reanalysis.py`); `prompts.yaml`;
-`data/splits/TV_v1.json`; `data/dags/<model>/<variant>/<phase>/`. Fuller versions: `EXPLAINER.md`
+`data/splits/TV_v1.json`; `data/dags/<model>/<variant>/<phase>/`. Fuller versions: `archive/EXPLAINER.md`
 (concepts), `EXPLAINER_v2.md` (the two recent sessions), `METHODOLOGY.md` (the locked plan),
 `HANDOVER.md` (operational state).*
