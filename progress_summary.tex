@@ -234,7 +234,7 @@ Task & Regime $A$ vs heuristic & median $\Delta$ & $p$ (two-sided) & Verdict \\
 \section{Next steps}
 
 \begin{enumerate}
-    \item \textbf{Phase 5 -- Thousand Voices.} Apply LLM \texttt{single\_prompt} + chunked Stage~2 (TV dialogues are 30--100+ turns) to the trauma-therapy corpus. Discrimination question: trauma type (8 classes, balanced).
+    \item \textbf{Phase 5 -- Thousand Voices.} Apply LLM \texttt{single\_prompt} labelling (agent turns only, per-phase taxonomy) to the trauma-therapy corpus. Discrimination question: \emph{therapy phase} (P5--P11) --- phase governs conversational flow; trauma type is content, used only as within-phase stratification.
     \item LLM-as-a-judge baseline on STAR for comparison against FuDGE.
     \item FF1 (Flow-F1 Score) for flow-quality evaluation.
     \item Held-out \emph{taxonomy} bootstrap split (orthogonal to the held-out flow split): bootstrap on 50\% of in-task, label the other 50\% with that frozen taxonomy.

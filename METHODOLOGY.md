@@ -185,11 +185,16 @@ Compare prompt variants × LLM panel. For each LLM DAG, populate intent buckets 
    - **V2:** Prompts 1–5 fused into a single prompt (all instructions in one call).
    - **V3:** Prompts 1–5 sequential (draft → critique → revise → finalise → merge-with-50-TV-examples).
 2. **LLM panel:** GPT-4o, Claude Sonnet 4.6, Gemini 2.5 Pro (commercial); Llama 3.1 70B + Qwen 2.5 72B (open-source). Total 5 LLMs × 3 variants = 15 DAGs per phase.
+   > **[2026-06 update — superseded]** The panel actually used (locked 2026-06-02, option C) is
+   > **deepseek-v3.2, kimi-k2-0905, gpt-oss-20b, gpt-5.1 via OpenRouter** — see
+   > `scripts/generate_llm_dags.py` `MODEL_REGISTRY`. Claude models are reserved for the
+   > LLM judge (`scripts/llm_judge.py`), keeping judge ≠ generator.
 3. Prompt 5 examples: 50 conversations randomly sampled from the TV training split (TODO 3).
 4. Output schema: `{"nodes": [{"id", "actor", "label"}], "edges": [{"from", "to"}]}` saved to `data/dags/<llm>/<variant>/<phase>/dag.json` + Mermaid.
 
 **Cost:** ~$30–80 across the panel.
 **Deliverable:** 15 DAGs per chosen phase (start with P10).
+> **[2026-06 update — superseded]** Scope is **P5/P6/P7** (the fully labelled phases), not P10.
 
 ---
 

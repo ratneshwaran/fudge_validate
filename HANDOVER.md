@@ -7,7 +7,39 @@ where they disagree, **this file is the current truth** for TODO 5–8 status.
 
 ---
 
-## ⚠ ADDENDUM 2026-06-07 (second session) — read this first; it supersedes parts of §0/§3/§5/§6
+## ⚠ ADDENDUM 2026-06-28 (data rebuild + segmentation) — read this FIRST; supersedes the 06-07 addendum where they conflict
+
+**1. The environment moved.** Work now happens on macOS in a repo-local `.venv`
+(Python 3.12: `.venv/bin/python`), not the old Windows conda env — every `C:\...` /
+`FPY=...` path below is historical. Keys live in `.env`: `OPENAI_API_KEY` and `HF_TOKEN`
+are populated; **`OPENROUTER_API_KEY` is NOT** (needed before DAG regeneration / the judge).
+
+**2. The original `data/` was lost and partially rebuilt (see `PROVENANCE.md` — the
+authoritative record).** Raw TV re-downloaded; **P5/P6/P7 re-labelled** (2026-06-28,
+~$4.25, 0 warnings); split `TV_v1.json` regenerated with the locked recipe (same
+2082/900 structure). The prefix-tree gate was re-run and **reproduces**: P5 1.67× /
+P6 1.83× / P7 1.47×. STAR artifacts, P8/P10 partial labels, and **all 36 DAGs are gone**
+— the June LLM-DAG result JSONs are archived in `experiments/archive_pre_relabel/` and
+must never be compared against post-rebuild numbers. DAGs must be regenerated
+(OpenRouter) before any Step-2 scoring.
+
+**3. New since 06-07 — the granularity fix (supervisor's whiteboard method):**
+`src/fudge/segment.py` collapses consecutive same-bucket utterances into stage-level
+segments (mean embedding, min-run smoothing) so conversations match a summary DAG's
+granularity *before* FuDGE — the input-side alternative to dwell-FuDGE. Wired into the
+scoring experiments via `--segment`. Caveat learned the hard way: TV labels are
+agent-only (single `_user_turn` client bucket), so single-bucket streams are left
+uncollapsed by design. Also scaffolded: the LLM-judge second metric
+(`scripts/llm_judge.py` + `LLM_JUDGE_DESIGN.md` + `LITERATURE_SCAN.md`).
+
+**4. A 2026-06 audit fixed a batch of defects** (fudge_dag now in the test oracle;
+variant comparison restricted to common phases; alternation gates DAG validity; empty
+completions no longer cached; length-matched p_perm documented as saturated —
+read lm_ratio, not p). `git log` has the details.
+
+---
+
+## ⚠ ADDENDUM 2026-06-07 (second session) — supersedes parts of §0/§3/§5/§6
 
 **1. Path explosion was real — fixed with an exact algorithm swap.**
 The §6 timing probe hung on deepseek v1/P5 (24 nodes but 5 nested multi-parent diamonds: 243 true

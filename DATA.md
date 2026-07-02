@@ -60,6 +60,13 @@ API calls**, and the DAGs are **non-deterministic** — regenerating them would 
 produce different graphs, which would no longer match the committed result JSONs in `experiments/`.
 **Copy them from the old machine** (cloud drive / USB / `scp`). Total ≈ **40 MB**.
 
+> **[2026-06-28 status — the old machine's copies were LOST; see `PROVENANCE.md`.]**
+> Rebuilt on this machine: `data/splits/TV_v1.json` (locked recipe, same structure) and
+> `data/TV_llm_labels/{P5,P6,P7}` (re-labelled, ~$4.25). Still absent: `data/STAR/`,
+> `data/STAR_llm_labels/`, `data/splits/STAR_v2.json`, `data/dags/` (must be regenerated
+> via OpenRouter), and the partial P8/P10 labels. The affected June result JSONs are
+> quarantined in `experiments/archive_pre_relabel/`.
+
 | Path | Size | What it is | If lost |
 |---|---|---|---|
 | `data/splits/TV_v1.json`, `data/splits/STAR_v2.json` | 188 KB | **The locked 70/30 splits.** Everything is scored against these. | Comparability breaks — must be byte-identical. |
