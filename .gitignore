@@ -13,3 +13,4 @@ logs/
 NOTEBOOK_LM.md
 supervisor_update.tex
 .venv/
+.DS_Store

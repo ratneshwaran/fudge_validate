@@ -46,10 +46,13 @@ from fudge.splits import load_split, split_conversations
 DEFAULT_TV_DIR = "data/thousand-voices-trauma/ThousandVoicesOfTrauma"
 SPLIT_PATH = "data/splits/TV_v1.json"
 
+# Defaults cover CURRENT-provenance results only (see PROVENANCE.md). The
+# pre-relabel LLM-DAG results live in experiments/archive_pre_relabel/ and were
+# produced under the old labels/split — mixing them with the current split's
+# lengths would silently pair old scores with new orderings. Analyse them via
+# --results only, and only alongside their own-era split.
 RESULT_FILES = [
     ("prefix-tree", "experiments/tv_prefix_tree_discrimination.json"),
-    ("gpt-oss-20b", "experiments/llm_dag_discrimination_gpt-oss-20b_r5.json"),
-    ("deepseek-v3.2", "experiments/llm_dag_discrimination_deepseek-v3.2_r5.json"),
 ]
 
 

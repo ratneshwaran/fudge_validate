@@ -20,13 +20,20 @@ data/                  Datasets (gitignored, populated by setup_data.sh)
 
 ## Setup
 
-Requires Python ≥ 3.10.
+Requires Python ≥ 3.10 (developed with a `.venv` on 3.12).
 
 ```bash
-pip install -e .
-cp .env.example .env  # then fill in OPENAI_API_KEY and HF_TOKEN
-bash setup_data.sh    # downloads both datasets into ./data
+python3.12 -m venv .venv
+.venv/bin/pip install -e ".[dev]"
+cp .env.example .env  # then fill in the keys (see below)
+PATH="$PWD/.venv/bin:$PATH" bash setup_data.sh   # downloads datasets into ./data
 ```
+
+API keys (all read from `.env`): `OPENAI_API_KEY` (labelling), `HF_TOKEN` (gated TV dataset
+download), `OPENROUTER_API_KEY` (DAG generation + LLM judge).
+
+Result JSONs in `experiments/` are tied to specific data generations — see `PROVENANCE.md`
+before comparing numbers.
 
 `setup_data.sh` is idempotent — re-running skips datasets already present.
 Use `bash setup_data.sh star` or `bash setup_data.sh tvot` to fetch one.
@@ -46,8 +53,9 @@ Use `bash setup_data.sh star` or `bash setup_data.sh tvot` to fetch one.
 `.env` is auto-loaded by both the LLM pipeline and `setup_data.sh`. Required
 keys:
 
-- `OPENAI_API_KEY` — for `scripts/llm_label_star.py`.
+- `OPENAI_API_KEY` — for `scripts/llm_label_star.py` / `scripts/llm_label_tv.py`.
 - `HF_TOKEN` — for the gated thousand-voices-trauma download.
+- `OPENROUTER_API_KEY` — for `scripts/generate_llm_dags.py` and `scripts/llm_judge.py`.
 
 ## Running
 
