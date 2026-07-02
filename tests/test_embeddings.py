@@ -38,6 +38,11 @@ def test_intent_centroid_is_normalized(emb):
     assert abs(norm - 1.0) < 1e-5, f"Centroid not normalized: norm={norm}"
 
 
+def test_intent_centroid_empty_bucket_raises(emb):
+    with pytest.raises(ValueError, match="empty bucket"):
+        emb.intent_centroid(IntentBucket(actor="agent", utterances=[], label="empty"))
+
+
 def test_cache_returns_same_result(emb):
     a1 = emb.encode("test caching")
     a2 = emb.encode("test caching")

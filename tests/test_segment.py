@@ -26,6 +26,12 @@ def buckets():
                      utterances=["My name is John.", "I am thirty years old.",
                                  "I live in London."],
                      label="give_personal"),
+        # second user bucket: streams with <2 buckets are deliberately not
+        # collapsed (see segment_conversation), so collapse tests need >=2
+        IntentBucket(actor="user",
+                     utterances=["What will happen in the next session?",
+                                 "Can you explain what we will do next?"],
+                     label="ask_about_process"),
     ]
 
 
@@ -100,6 +106,19 @@ def test_segments_are_unit_norm_and_not_longer(emb, buckets):
     for u in seg.utterances:
         assert u.embedding is not None
         assert abs(float(np.linalg.norm(u.embedding)) - 1.0) < 1e-5
+
+
+def test_single_bucket_actor_stream_not_collapsed(emb, buckets):
+    # An actor with only ONE bucket has no granularity to normalise against —
+    # collapsing would merge their entire stream into one segment (the TV
+    # prefix-tree `_user_turn` case). Such streams must stay uncollapsed.
+    single_user_bucket = [b for b in buckets if b.actor == "agent"] + \
+                         [b for b in buckets if b.actor == "user"][:1]
+    conv = _conv(("user", "My name is Alice."),
+                 ("user", "I am twenty-nine."),
+                 ("user", "I live in Leeds."))
+    seg = segment_conversation(conv, single_user_bucket, emb, min_run=2)
+    assert len(seg.utterances) == 3  # one segment per turn, no collapse
 
 
 def test_metadata_preserved(emb, buckets):

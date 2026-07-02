@@ -203,10 +203,16 @@ class DAGClient:
         self.usage.add(usage_dict)
         self.api_calls += 1
 
-        self.cache.put(key, {
-            "request": {"model": self.slug, "messages": messages},
-            "content": content, "usage": usage_dict,
-        })
+        # Never cache an empty completion — a cached "" would replay forever
+        # (incl. under --dry-run) and the cell could only be fixed by hand-
+        # deleting the cache entry. Leave it uncached so a re-run retries.
+        if content.strip():
+            self.cache.put(key, {
+                "request": {"model": self.slug, "messages": messages},
+                "content": content, "usage": usage_dict,
+            })
+        else:
+            print(f"[warn] empty completion from {self.slug} (stage={stage}); not cached")
         await self.logger.write({
             "ts": datetime.now(timezone.utc).isoformat(),
             "stage": stage, "cache_hit": False, "model": self.slug,
@@ -232,7 +238,7 @@ def render_phase_slots(text: str, phase: str, phases: dict[str, dict]) -> str:
     """Fill {{phase_*}} slots for one phase. No-op for prompts without slots."""
     meta = phases.get(phase)
     if not meta:
-        raise SystemExit(
+        raise ValueError(
             f"prompts.yaml has no `phases` entry for {phase}; cannot phase-condition. "
             f"Add it (see the phases: block) before generating."
         )
@@ -400,21 +406,19 @@ def parse_mermaid_dag(mmd: str) -> dict:
     """
     nodes: dict[str, str] = {}
     edges: list[tuple[str, str]] = []
-    skip = ("style ", "classdef ", "linkstyle ", "class ", "subgraph",
-            "direction ", "%%", "end")
 
     for raw in mmd.splitlines():
         line = raw.strip()
         if not line:
             continue
         low = line.lower()
-        if low.startswith(skip) or low.startswith(("graph", "flowchart")):
-            # still scan graph header line? labels rarely there; skip safely
-            if low.startswith(("graph", "flowchart")):
-                continue
-            if low.startswith(("style", "classdef", "linkstyle", "class ",
-                               "subgraph", "direction", "%%")) or low == "end":
-                continue
+        # Header needs a word boundary: `graph TD` is a header, but a node id
+        # like `graphStart[...]` must still be parsed.
+        if re.match(r"(graph|flowchart)\b", low):
+            continue
+        if low.startswith(("style ", "classdef ", "linkstyle ", "class ",
+                           "subgraph", "direction ", "%%")) or low == "end":
+            continue
 
         for nid, _br, label in _NODE_RE.findall(line):
             if label.strip():
@@ -486,7 +490,9 @@ def check_dag_validity(dag: dict) -> dict:
         1 for e in edges
         if actor.get(e["from"]) == actor.get(e["to"]) and actor.get(e["from"]) in ("agent", "user")
     )
-    ok = acyclic and n_components <= 1 and n_unknown == 0
+    # Alternation is a hard rule in the prompts, so it gates `ok` too.
+    ok = (acyclic and n_components <= 1 and n_unknown == 0
+          and n_alt_violations == 0)
     return {
         "ok": ok,
         "acyclic": acyclic,
@@ -624,14 +630,20 @@ async def _async_main(args: argparse.Namespace) -> None:
         for variant in variants:
             for phase in args.phase:
                 t0 = time.time()
-                s = await generate_one(
-                    model_name=model_name, variant=variant, phase=phase,
-                    prompts=prompts, phases=phases, tv_dir=args.tv_dir, split=split,
-                    out_root=out_root, cache=cache, logger=logger,
-                    dry_run=args.dry_run, concurrency=args.concurrency,
-                    n_examples=args.n_examples,
-                    max_chars_per_conv=args.max_chars_per_conv, seed=args.seed,
-                )
+                try:
+                    s = await generate_one(
+                        model_name=model_name, variant=variant, phase=phase,
+                        prompts=prompts, phases=phases, tv_dir=args.tv_dir, split=split,
+                        out_root=out_root, cache=cache, logger=logger,
+                        dry_run=args.dry_run, concurrency=args.concurrency,
+                        n_examples=args.n_examples,
+                        max_chars_per_conv=args.max_chars_per_conv, seed=args.seed,
+                    )
+                except ValueError as e:
+                    # One bad cell (e.g. phase missing from prompts.yaml) should
+                    # not abort the rest of the model x variant x phase sweep.
+                    print(f"[skip] {model_name}/{variant}/{phase}: {e}")
+                    continue
                 s["elapsed_s"] = round(time.time() - t0, 1)
                 summaries.append(s)
                 v = s["validity"]
@@ -641,6 +653,8 @@ async def _async_main(args: argparse.Namespace) -> None:
                             (f"{v['n_cycles']}cyc", not v["acyclic"]),
                             (f"{v['n_components']}comp", v["n_components"] > 1),
                             (f"{v['n_unknown_actor']}unk", v["n_unknown_actor"] > 0),
+                            (f"{v['n_alternation_violations']}alt",
+                             v["n_alternation_violations"] > 0),
                         ] if on
                     ) + "]"
                 )

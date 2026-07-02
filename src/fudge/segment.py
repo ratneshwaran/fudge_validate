@@ -73,12 +73,22 @@ def segment_conversation(
     are re-interleaved by the original position of each run's first member.
     FuDGE's actor constraint is preserved (assignment is within-actor).
 
+    Known limitation: when a run merges non-contiguous turns, no linear order can
+    preserve every original pairwise ordering — first-member position is a
+    deterministic tie-break, not a faithful ordering. Inherent to collapsing.
+
     Returns a new Conversation; `len(result.utterances) <= len(conv.utterances)`.
     """
+    # A single-bucket actor stream has no granularity to normalise against —
+    # every turn would map to that one bucket and the whole stream would collapse
+    # to ONE segment per conversation (e.g. the TV prefix-tree, whose agent-only
+    # labelling leaves exactly one `_user_turn` client bucket). Leave streams
+    # with fewer than 2 buckets uncollapsed: each turn stays its own segment.
     centroids: dict[str, np.ndarray | None] = {}
     for a in _ACTORS:
         bs = [b for b in all_buckets if b.actor == a]
-        centroids[a] = (np.array([emb.intent_centroid(b) for b in bs]) if bs else None)
+        centroids[a] = (np.array([emb.intent_centroid(b) for b in bs])
+                        if len(bs) >= 2 else None)
 
     segments: list[tuple[int, Utterance]] = []
     for a in _ACTORS:
@@ -88,7 +98,7 @@ def segment_conversation(
         texts = [conv.utterances[i].text for i in idx]
         U = emb.encode_batch(texts)  # (N, d), unit-normalised
         if centroids[a] is None:
-            labels = list(range(len(idx)))  # no buckets for this actor -> no collapse
+            labels = list(range(len(idx)))  # <2 buckets for this actor -> no collapse
         else:
             labels = [int(x) for x in (U @ centroids[a].T).argmax(axis=1)]
 
@@ -98,7 +108,9 @@ def segment_conversation(
             if nrm > 0:
                 vec = vec / nrm
             first_pos = idx[run[0]]
-            text = f"[seg@{first_pos}] " + " | ".join(texts[r] for r in run)
+            # Key includes the member count so a literal " | " inside an
+            # utterance can't make two different segments share a cost-cache key.
+            text = f"[seg@{first_pos}x{len(run)}] " + " | ".join(texts[r] for r in run)
             segments.append((first_pos, Utterance(actor=a, text=text, embedding=vec)))
 
     segments.sort(key=lambda t: t[0])

@@ -204,18 +204,31 @@ def main():
                   f"in={r['in_mean']:.3f} out={r['out_mean']:.3f} "
                   f"gap={r['gap_mean']:+.3f} ratio={r['ratio_mean']:.2f}x p={r['p']:.1e} {sig}")
 
-    # per-variant comparison (TODO 10, single model)
-    print("\n=== Per-variant summary (mean over phases) ===")
+    # per-variant comparison (TODO 10, single model). Variants are only compared
+    # over the phases that ALL of them evaluated — otherwise a variant with a
+    # skipped cell (e.g. its hardest phase) gets an inflated mean.
+    print("\n=== Per-variant summary (mean over common phases) ===")
     evald = [r for r in results if "p" in r]
     bonf = 0.01 / len(evald) if evald else 1.0
+    phases_by_variant = {v: {r["phase"] for r in evald if r["variant"] == v}
+                         for v in args.variants}
+    phases_by_variant = {v: p for v, p in phases_by_variant.items() if p}
+    common = (set.intersection(*phases_by_variant.values())
+              if phases_by_variant else set())
+    for v, p in phases_by_variant.items():
+        dropped = sorted(p - common)
+        if dropped:
+            print(f"  [warn] {v}: phases {dropped} excluded from the comparison "
+                  f"(not evaluated by every variant)")
     variant_summ = {}
     for variant in args.variants:
-        rs = [r for r in evald if r["variant"] == variant]
+        rs = [r for r in evald if r["variant"] == variant and r["phase"] in common]
         if not rs:
             continue
         n_pass = sum(1 for r in rs if r["p"] < bonf and r["gap_mean"] > 0)
         variant_summ[variant] = {
             "n_phases": len(rs),
+            "phases_compared": sorted(common),
             "n_pass_bonf": n_pass,
             "mean_ratio": float(np.mean([r["ratio_mean"] for r in rs])),
             "mean_gap": float(np.mean([r["gap_mean"] for r in rs])),
@@ -228,8 +241,8 @@ def main():
     if variant_summ:
         best = max(variant_summ, key=lambda v: variant_summ[v]["mean_ratio"])
         print(f"\nBest variant for {args.model}: {best} "
-              f"(mean ratio {variant_summ[best]['mean_ratio']:.2f}x) "
-              f"[Bonferroni alpha={bonf:.4f}]")
+              f"(mean ratio {variant_summ[best]['mean_ratio']:.2f}x over "
+              f"{sorted(common)}) [Bonferroni alpha={bonf:.4f}]")
 
     out = Path(args.out) if args.out else Path(f"experiments/llm_dag_discrimination_{args.model}{out_suffix}.json")
     out.parent.mkdir(parents=True, exist_ok=True)

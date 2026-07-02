@@ -288,7 +288,25 @@ async def judge_conversation(client: JudgeClient, conv: Conversation, rules: lis
     msgs = [{"role": "system", "content": JUDGE_SYSTEM},
             {"role": "user", "content": judge_user(conv, rules)}]
     out = await client.call("judge", msgs, "verdicts", verdict_schema(len(rules)))
-    return out["verdicts"]
+    # The schema enforces the verdict COUNT but not rule_id identity, so map the
+    # verdicts back onto the input rules: duplicates are an error, an omitted
+    # rule scores 0 (N/A) with a warning, unknown ids are dropped with a warning.
+    by_id: dict[str, dict] = {}
+    for v in out["verdicts"]:
+        if v["rule_id"] in by_id:
+            raise ValueError(f"judge returned duplicate verdict for rule {v['rule_id']!r}")
+        by_id[v["rule_id"]] = v
+    aligned = []
+    for r in rules:
+        v = by_id.pop(r["id"], None)
+        if v is None:
+            print(f"[warn] judge omitted rule {r['id']!r}; treating as N/A (0)")
+            v = {"rule_id": r["id"], "score": 0,
+                 "justification": "omitted by judge; treated as N/A"}
+        aligned.append(v)
+    if by_id:
+        print(f"[warn] judge returned unknown rule ids (ignored): {sorted(by_id)}")
+    return aligned
 
 
 def score_session(verdicts: list[dict]) -> float:
@@ -301,12 +319,24 @@ def score_session(verdicts: list[dict]) -> float:
     return sum(scores) / len(scores) if scores else float("nan")
 
 
-def assert_not_circular(judge_model: str, generator_models: list[str]) -> None:
-    """Locked guard: the judge must not be a model whose DAGs it grades."""
-    if judge_model in generator_models:
+def assert_not_circular(judge_model: str, generator_registry: dict) -> None:
+    """Locked guard: the judge must not be a model whose DAGs it grades.
+
+    Compares the underlying OpenRouter SLUGS, not registry key names — the two
+    registries share no keyspace, so a name comparison could never fire.
+    """
+    entry = JUDGE_REGISTRY.get(judge_model)
+    if entry is None:
+        raise SystemExit(f"unknown judge model {judge_model!r}; "
+                         f"known: {sorted(JUDGE_REGISTRY)}")
+    judge_slug = entry["slug"]
+    clashes = [name for name, e in generator_registry.items()
+               if e["slug"] == judge_slug]
+    if clashes:
         raise SystemExit(
-            f"Circularity violation: judge {judge_model!r} is also a generator under "
-            f"comparison ({generator_models}). Pick a judge outside that set.")
+            f"Circularity violation: judge {judge_model!r} ({judge_slug}) is the same "
+            f"model as generator(s) {clashes} under comparison. Pick a judge outside "
+            f"that set.")
 
 
 # --------------------------------------------------------------------------- #
@@ -334,7 +364,7 @@ def _build_argparser() -> argparse.ArgumentParser:
 
 async def _amain(args) -> None:
     # Judge must be external to the generators being compared.
-    assert_not_circular(args.judge_model, list(gen.MODEL_REGISTRY))
+    assert_not_circular(args.judge_model, gen.MODEL_REGISTRY)
     _, phases = gen.load_prompts(Path(args.prompts))
     dag_path = Path(args.dags_root) / args.gen_model / args.variant / args.phase / "dag.json"
     dag = json.load(open(dag_path, encoding="utf-8"))

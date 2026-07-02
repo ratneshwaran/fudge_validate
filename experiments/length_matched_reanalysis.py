@@ -23,6 +23,11 @@ Method: direct standardisation over length bins on the common support.
     p = P(lm_ratio_perm >= lm_ratio_observed);
   - coverage = fraction of in-phase conversations inside matched bins.
 
+CAVEAT (2026-06 audit): at these sample sizes (150 in / 750 out) the permutation
+p saturates at its floor 1/(n_perm+1) for essentially EVERY cell — including
+lm_ratio ~ 1.01 cells with no meaningful effect. p_perm confirms direction only;
+the informative statistic is the lm_ratio magnitude (vs the 1.3 effect-size bar).
+
 Score-to-length alignment is reconstructed from the split order (the scoring
 scripts iterate split_meta["splits"] insertion order) and VALIDATED per
 out-phase block via the within-block score-length Spearman rho: a misaligned
@@ -54,6 +59,17 @@ SPLIT_PATH = "data/splits/TV_v1.json"
 RESULT_FILES = [
     ("prefix-tree", "experiments/tv_prefix_tree_discrimination.json"),
 ]
+
+
+def parse_result_specs(specs: list[str]) -> list[tuple[str, str]]:
+    """Parse --results specs: 'label=path' or a bare path (label = file stem)."""
+    out = []
+    for spec in specs:
+        label, sep, path = spec.partition("=")
+        if not sep:  # bare path: derive the label from the filename
+            label, path = Path(spec).stem, spec
+        out.append((label, path))
+    return out
 
 
 def load_test_lengths(tv_dir: str, split_meta: dict) -> dict[str, list[int]]:
@@ -142,13 +158,7 @@ def main():
     ap.add_argument("--out", default="experiments/length_matched_reanalysis.json")
     args = ap.parse_args()
 
-    if args.results:
-        result_files = []
-        for spec in args.results:
-            label, sep, path = spec.partition("=")
-            result_files.append((label, path) if sep else (Path(path).stem, path))
-    else:
-        result_files = RESULT_FILES
+    result_files = parse_result_specs(args.results) if args.results else RESULT_FILES
 
     split_meta = load_split(args.split_path)
     split_order = list(split_meta["splits"].keys())
@@ -156,6 +166,8 @@ def main():
     lens = load_test_lengths(args.tv_dir, split_meta)
     for ph, L in lens.items():
         print(f"  {ph}: n={len(L)} mean_len={np.mean(L):.1f}")
+    print("NOTE: p_perm saturates at 1/(n_perm+1) at these sample sizes — "
+          "read lm_ratio, not p.")
 
     all_results = []
     for name, fn in result_files:

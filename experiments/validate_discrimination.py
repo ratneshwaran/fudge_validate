@@ -1,6 +1,12 @@
 """
 Reproduce Table 1b: FuDGE separates in-task vs out-of-task conversations.
 
+SUPERSEDED (kept as the original Table-1b reproducer): this script builds the
+flow from ALL in-task conversations (no held-out split, no significance test,
+legacy global np.random.seed). Use experiments/star_v2_validation.py (proper
+70/30 split + Mann-Whitney + Bonferroni) or experiments/significance.py for
+any defensible number.
+
 For each task:
 1. Build a supervised flow from in-task conversations
 2. Sample in-task conversations as "positives"

@@ -120,8 +120,11 @@ def evaluate_phase(
     flow, all_buckets = build_flow_from_conversations(train_labelled, label_source=labels)
     costs = FudgeCosts(emb, all_buckets)
 
-    # Sanity re-validation under --segment: the prefix-tree is already turn-level,
-    # so segmentation should collapse almost nothing and ratios should barely move.
+    # Sanity re-validation under --segment. NOTE: TV labels are agent-only, so
+    # the user side is a single `_user_turn` bucket — segment_conversation leaves
+    # single-bucket streams uncollapsed, but the agent stream still collapses
+    # across the ~8-20 label taxonomy, so ratios WILL move. The check here is
+    # that discrimination significance survives segmentation, not invariance.
     if segment:
         test = [segment_conversation(c, all_buckets, emb, min_run=min_run) for c in test]
         negatives = [segment_conversation(c, all_buckets, emb, min_run=min_run)
@@ -160,7 +163,8 @@ def main() -> None:
     ap.add_argument("--split-path", default=str(SPLIT_PATH))
     ap.add_argument("--segment", action="store_true",
                     help="Re-validate under granularity-normalised FuDGE (segment test convs "
-                         "against the prefix-tree buckets). Ratios should barely move.")
+                         "against the prefix-tree buckets). Agent-side collapse shifts the "
+                         "ratios; the check is that significance survives.")
     ap.add_argument("--min-run", type=int, default=2)
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
