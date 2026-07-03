@@ -36,6 +36,16 @@ length-matched re-analysis, and the withdrawal of the pilot rankings) — but th
 mixed with post-rebuild results in any comparison. `length_matched_reanalysis.py`'s defaults now
 point only at current-provenance files.
 
+## 2026-06-28 DAG pilot (post-rebuild generation)
+
+New DAGs generated this day (OpenRouter, `gpt-oss-20b` v3 × P5/P6/P7; P7 flagged
+`BAD[2alt]`) live in `data/dags/` with 100%-coverage `aligned_r5.json`. Results produced
+against them + the rebuilt labels/split — comparable to each other and to the rebuilt
+prefix-tree gate, **not** to anything in `archive_pre_relabel/`:
+`llm_dag_discrimination_gpt-oss-20b_r5.json` (baseline), `..._r5_seg.json` (segmented),
+`length_matched_pilot_2026-06-28.json` (raw-vs-seg length re-analysis; the segmentation
+headline: out-block ρ 0.92–0.98 → ≈0/negative, lm ratios P5 1.14→1.59, P6 1.17→1.30).
+
 ## Rules of thumb
 
 1. A result JSON is only comparable to another if both are on the same side of the 2026-06-28 line.
