@@ -7,7 +7,40 @@ where they disagree, **this file is the current truth** for TODO 5–8 status.
 
 ---
 
-## ⚠ ADDENDUM 2026-06-28 (data rebuild + segmentation) — read this FIRST; supersedes the 06-07 addendum where they conflict
+## ⚠ ADDENDUM 2026-07 (current state) — read this FIRST
+
+**Where things stand (as of 2026-07-12).** Branch `feat/segmentation-fudge` (pushed to
+GitHub, 8 commits ahead of `master`) holds everything below. `master` has only the docs
+cleanup. All three `.env` keys are populated (OpenAI, HF, OpenRouter).
+
+**The segmentation method is validated end-to-end.** Pilot (gpt-oss-20b v3 × P5/P6/P7,
+fresh DAGs, 100% alignment coverage, commit `28844be`):
+- raw FuDGE reproduced the length confound on new DAGs: out-block ρ(score, length)
+  = +0.92…+0.98;
+- `--segment` killed it (ρ ≈ 0/negative), and length-matched ratios ROSE:
+  P5 1.14→**1.59×**, P6 1.17→**1.30×**, P7 flat ~1.06 (that DAG is genuinely weak and
+  fails the new alternation validity gate).
+- Supervisor deck ready to send: `supervisor_update_2026-06-28.pptx` (untracked).
+
+**Next steps, in order:**
+1. Scale the grid: `generate_llm_dags.py` for deepseek-v3.2 (± kimi-k2, gpt-5.1) ×
+   v1/v2/v3 → align `--reassign-passes 5` → score baseline + `--segment` →
+   `length_matched_reanalysis.py --results ...`. Cheap (~$1–2 OpenRouter).
+2. Decide merge of `feat/segmentation-fudge` → `master` (verified; ready).
+3. LLM-judge track: `scripts/llm_judge.py` scaffold is tested; needs the
+   discrimination experiment + ~20-session hand-scored validation (report kappa,
+   not just accuracy — see `LLM_JUDGE_DESIGN.md` / `LITERATURE_SCAN.md`).
+4. Later: ≥3 generations/cell for error bars; random-DAG baseline; P8/P10/P11 labels.
+
+**Ground rules that bite:** results are only comparable within a data generation —
+check `PROVENANCE.md` before comparing any numbers (June results are quarantined in
+`experiments/archive_pre_relabel/`). Run everything with `.venv/bin/python`. Git
+commits: no AI/tool attribution. The old June result JSONs can never be reproduced
+(lost non-deterministic DAGs).
+
+---
+
+## ⚠ ADDENDUM 2026-06-28 (data rebuild + segmentation) — supersedes the 06-07 addendum where they conflict
 
 **1. The environment moved.** Work now happens on macOS in a repo-local `.venv`
 (Python 3.12: `.venv/bin/python`), not the old Windows conda env — every `C:\...` /
