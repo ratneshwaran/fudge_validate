@@ -28,6 +28,10 @@ class EmbeddingCache:
 
     def intent_centroid(self, bucket: IntentBucket) -> np.ndarray:
         """Paper Eq 10: e_Br = mean of embeddings of all utterances in the bucket."""
+        if not bucket.utterances:
+            # mean over zero rows would silently return NaN and poison every
+            # downstream cosine; fail loudly instead.
+            raise ValueError(f"empty bucket {bucket.label!r}: cannot compute centroid")
         embeddings = self.encode_batch(bucket.utterances)
         centroid = embeddings.mean(axis=0)
         return centroid / np.linalg.norm(centroid)

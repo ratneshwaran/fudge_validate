@@ -7,7 +7,98 @@ where they disagree, **this file is the current truth** for TODO 5–8 status.
 
 ---
 
-## ⚠ ADDENDUM 2026-06-07 (second session) — read this first; it supersedes parts of §0/§3/§5/§6
+## ⚠ ADDENDUM 2026-07 (current state) — read this FIRST
+
+**Where things stand (as of 2026-07-12).** Branch `feat/segmentation-fudge` (pushed to
+GitHub, 8 commits ahead of `master`) holds everything below. `master` has only the docs
+cleanup. All three `.env` keys are populated (OpenAI, HF, OpenRouter).
+
+**The segmentation method holds up on a single-generation pilot** (gpt-oss-20b v3 ×
+P5/P6/P7, fresh DAGs, 100% alignment coverage, commit `28844be`; numbers corrected and
+error-barred after the 2026-07 adversarial review — caveats below):
+- raw FuDGE reproduced the length confound on new DAGs: out-block ρ(score, length)
+  ≈ **+0.54…+0.98** (earlier summarised as "+0.92…+0.98" — the P6→P5 block is +0.54);
+- `--segment` does NOT zero ρ — it SHIFTS the score to the DAG's granularity. In-phase
+  ρ(score, original length) flips sign (P5 +0.64→−0.58, P6 +0.98→−0.23, P7 +0.98→+0.31)
+  and a new dependence on the segment COUNT appears (ρ up to −0.90); out-block ρ ≈
+  **−0.57…+0.72** (two blocks, both vs the long P10, stay ≈+0.7 on lengths ABOVE the
+  in-phase support, which the matched ratio never uses);
+- the length-matched ratio (binned on ORIGINAL length, so the shift is controlled by
+  construction) ROSE, now with a conversation-level bootstrap CI: **P5 1.14→1.59×
+  (95% CI [1.47, 1.73]; drops 58% of negatives via common support), P6 1.17→1.30×
+  ([1.25, 1.35]), P7 flat ~1.06× ([1.04, 1.08])**. P7's DAG is genuinely weak; its
+  alternation-gate exclusion is a real graph property but was added to the pass criterion
+  *after* P7's weakness was seen (git `6f48231`) → treat P7 as an honest null, not a win;
+- Supervisor deck: `supervisor_update_2026-06-28.pptx` (untracked; update its ρ/ratio
+  numbers to match the above before sending).
+
+**Caveats from the 2026-07 adversarial review (code + docs fixed in the same pass):**
+- `length_matched_reanalysis.py` now emits the bootstrap CI, out-of-phase coverage, and
+  the in-phase ρ (the axis the confound was defined on, which the old `block_rhos` never
+  checked). Rerun: `experiments/length_matched_reanalysis_2026-07.json`.
+- The alignment k-means did NOT converge at the r5 cutoff (`converged=False`, ~3–4%
+  churn), so absolute ratios are budget-sensitive point estimates.
+  `experiments/budget_sensitivity.py` sweeps passes 4/5/6: **P5 stable (1.61/1.59/1.57,
+  spread 0.04), P7 stable (~1.06), but P6's magnitude drifts (1.24/1.30/1.40, still
+  rising at pass 6)** — read P6's "1.30×" as approximate, not exact. Direction (>1) holds
+  for all three.
+- The CI captures conversation sampling only, NOT DAG-generation variance — still n=1
+  generation/cell; ≥3 generations for a generation error bar remains open (next-step 4).
+- Rule 2 (never compare to label strings) fires 0× here but is now guarded:
+  `build_flow_from_llm_dag(label_fallback=False)` / `--drop-empty-nodes` drops empty nodes
+  and rewires parents→children — use it for the scaled grid.
+
+**Next steps, in order:**
+1. Scale the grid: `generate_llm_dags.py` for deepseek-v3.2 (± kimi-k2, gpt-5.1) ×
+   v1/v2/v3 → align `--reassign-passes 5` → score baseline + `--segment` →
+   `length_matched_reanalysis.py --results ...`. Cheap (~$1–2 OpenRouter).
+2. Decide merge of `feat/segmentation-fudge` → `master` (verified; ready).
+3. LLM-judge track: `scripts/llm_judge.py` scaffold is tested; needs the
+   discrimination experiment + ~20-session hand-scored validation (report kappa,
+   not just accuracy — see `LLM_JUDGE_DESIGN.md` / `LITERATURE_SCAN.md`).
+4. Later: ≥3 generations/cell for error bars; random-DAG baseline; P8/P10/P11 labels.
+
+**Ground rules that bite:** results are only comparable within a data generation —
+check `PROVENANCE.md` before comparing any numbers (June results are quarantined in
+`experiments/archive_pre_relabel/`). Run everything with `.venv/bin/python`. Git
+commits: no AI/tool attribution. The old June result JSONs can never be reproduced
+(lost non-deterministic DAGs).
+
+---
+
+## ⚠ ADDENDUM 2026-06-28 (data rebuild + segmentation) — supersedes the 06-07 addendum where they conflict
+
+**1. The environment moved.** Work now happens on macOS in a repo-local `.venv`
+(Python 3.12: `.venv/bin/python`), not the old Windows conda env — every `C:\...` /
+`FPY=...` path below is historical. Keys live in `.env`: `OPENAI_API_KEY` and `HF_TOKEN`
+are populated; **`OPENROUTER_API_KEY` is NOT** (needed before DAG regeneration / the judge).
+
+**2. The original `data/` was lost and partially rebuilt (see `PROVENANCE.md` — the
+authoritative record).** Raw TV re-downloaded; **P5/P6/P7 re-labelled** (2026-06-28,
+~$4.25, 0 warnings); split `TV_v1.json` regenerated with the locked recipe (same
+2082/900 structure). The prefix-tree gate was re-run and **reproduces**: P5 1.67× /
+P6 1.83× / P7 1.47×. STAR artifacts, P8/P10 partial labels, and **all 36 DAGs are gone**
+— the June LLM-DAG result JSONs are archived in `experiments/archive_pre_relabel/` and
+must never be compared against post-rebuild numbers. DAGs must be regenerated
+(OpenRouter) before any Step-2 scoring.
+
+**3. New since 06-07 — the granularity fix (supervisor's whiteboard method):**
+`src/fudge/segment.py` collapses consecutive same-bucket utterances into stage-level
+segments (mean embedding, min-run smoothing) so conversations match a summary DAG's
+granularity *before* FuDGE — the input-side alternative to dwell-FuDGE. Wired into the
+scoring experiments via `--segment`. Caveat learned the hard way: TV labels are
+agent-only (single `_user_turn` client bucket), so single-bucket streams are left
+uncollapsed by design. Also scaffolded: the LLM-judge second metric
+(`scripts/llm_judge.py` + `LLM_JUDGE_DESIGN.md` + `LITERATURE_SCAN.md`).
+
+**4. A 2026-06 audit fixed a batch of defects** (fudge_dag now in the test oracle;
+variant comparison restricted to common phases; alternation gates DAG validity; empty
+completions no longer cached; length-matched p_perm documented as saturated —
+read lm_ratio, not p). `git log` has the details.
+
+---
+
+## ⚠ ADDENDUM 2026-06-07 (second session) — supersedes parts of §0/§3/§5/§6
 
 **1. Path explosion was real — fixed with an exact algorithm swap.**
 The §6 timing probe hung on deepseek v1/P5 (24 nodes but 5 nested multi-parent diamonds: 243 true

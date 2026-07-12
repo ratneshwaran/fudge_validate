@@ -25,6 +25,7 @@ Three modes (combined into one run):
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from itertools import combinations
 from pathlib import Path
@@ -373,6 +374,9 @@ def main() -> None:
         help="Regime to use as the reference (B) in paired comparisons. "
         "All other regimes (A) are compared against it.",
     )
+    ap.add_argument("--out", default="experiments/significance.json",
+                    help="Where to persist the results as JSON (every other "
+                         "experiment script persists; console-only loses provenance).")
     args = ap.parse_args()
 
     print("Loading STAR...")
@@ -433,6 +437,18 @@ def main() -> None:
     _markdown_in_dist(in_dist_rows)
     _markdown_held_out(aggregate_rows, args.n_splits)
     _markdown_paired(paired_rows)
+
+    out = Path(args.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with open(out, "w", encoding="utf-8") as f:
+        json.dump({
+            "tasks": args.tasks, "n_splits": args.n_splits,
+            "paired_against": args.paired_against,
+            "in_distribution": in_dist_rows,
+            "held_out_aggregate": aggregate_rows,
+            "paired": paired_rows,
+        }, f, indent=2)
+    print(f"\nWrote {out}")
 
 
 if __name__ == "__main__":

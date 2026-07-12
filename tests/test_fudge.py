@@ -1,12 +1,13 @@
 """
-Critical correctness test: naive and efficient FuDGE must agree on all inputs.
+Critical correctness test: all three FuDGE scorers must agree on all inputs.
+fudge_dag is the production Step-2 scorer, so it is part of the oracle matrix.
 """
 import pytest
 from fudge.types import IntentBucket, Utterance, Conversation, DialogueFlow
 from fudge.embeddings import EmbeddingCache
 from fudge.costs import FudgeCosts
 from fudge.fudge_naive import fudge_naive, path_edit_distance
-from fudge.fudge_efficient import fudge_efficient
+from fudge.fudge_efficient import fudge_efficient, fudge_dag
 
 
 @pytest.fixture(scope="module")
@@ -81,6 +82,29 @@ def build_deep_flow(buckets):
     return flow
 
 
+def build_nested_diamond_flow(buckets):
+    """Two serial diamonds with reconvergent merges — the shape fudge_dag exists
+    for (route count doubles per diamond; the DFS scorer re-expands at merges).
+
+    root -> greet_user -> {greet_agent, ask_details} -> ask_hotel (merge 1)
+         -> {confirm, goodbye_agent} -> goodbye_user (merge 2)
+    """
+    flow = DialogueFlow()
+    for nid in ["greet_user", "greet_agent", "ask_details", "ask_hotel",
+                "confirm", "goodbye_agent", "goodbye_user"]:
+        flow.add_node(nid, buckets[nid])
+    flow.add_edge(flow.root, "greet_user")
+    flow.add_edge("greet_user", "greet_agent")
+    flow.add_edge("greet_user", "ask_details")
+    flow.add_edge("greet_agent", "ask_hotel")
+    flow.add_edge("ask_details", "ask_hotel")
+    flow.add_edge("ask_hotel", "confirm")
+    flow.add_edge("ask_hotel", "goodbye_agent")
+    flow.add_edge("confirm", "goodbye_user")
+    flow.add_edge("goodbye_agent", "goodbye_user")
+    return flow
+
+
 def build_wide_branching_flow(buckets):
     """root -> greet_user -> {greet_agent, ask_details}, greet_agent -> {ask_hotel, ask_food}, ask_hotel -> confirm, ask_food -> confirm, ask_details -> provide_dates"""
     flow = DialogueFlow()
@@ -132,17 +156,19 @@ FLOW_BUILDERS = [
     build_linear_flow,
     build_branching_flow,
     build_diamond_flow,
+    build_nested_diamond_flow,
     build_deep_flow,
     build_wide_branching_flow,
 ]
 
 
 @pytest.mark.parametrize("flow_builder", FLOW_BUILDERS,
-                         ids=["linear", "branching", "diamond", "deep", "wide_branching"])
+                         ids=["linear", "branching", "diamond", "nested_diamond",
+                              "deep", "wide_branching"])
 @pytest.mark.parametrize("conv_idx", range(len(CONVS)),
                          ids=["hotel", "food", "hotel_long", "short", "empty"])
-def test_naive_equals_efficient(emb, flow_builder, conv_idx):
-    """Both algorithms MUST return the same distance on the same inputs."""
+def test_all_scorers_agree(emb, flow_builder, conv_idx):
+    """All three algorithms MUST return the same distance on the same inputs."""
     buckets = make_buckets()
     flow = flow_builder(buckets)
     conv = CONVS[conv_idx]
@@ -151,9 +177,12 @@ def test_naive_equals_efficient(emb, flow_builder, conv_idx):
 
     naive_score = fudge_naive(conv, flow, costs)
     efficient_score = fudge_efficient(conv, flow, costs)
+    dag_score = fudge_dag(conv, flow, costs)
 
     assert abs(naive_score - efficient_score) < 1e-6, \
         f"Naive ({naive_score:.6f}) != Efficient ({efficient_score:.6f})"
+    assert abs(naive_score - dag_score) < 1e-6, \
+        f"Naive ({naive_score:.6f}) != DAG ({dag_score:.6f})"
 
 
 # --- Additional sanity tests ---

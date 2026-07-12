@@ -100,6 +100,8 @@ def _tv_stem_to_dialogue_id(stem: str) -> int:
 
     Subjects are 1..500, phases are P5..P11, so `subject * 100 + phase`
     yields a unique non-overlapping integer per file (max ~50011).
+    Fragile by construction: collision-free only while phase numbers stay
+    below 100 — revisit if the dataset ever grows beyond P99.
     """
     subj_str, phase_str = stem.split("_P", 1)
     return int(subj_str) * 100 + int(phase_str)

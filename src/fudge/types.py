@@ -1,4 +1,5 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+import numpy as np
 import networkx as nx
 
 
@@ -6,6 +7,11 @@ import networkx as nx
 class Utterance:
     actor: str  # 'user' or 'agent'
     text: str
+    # Optional precomputed embedding. Set by segment_conversation for collapsed
+    # segments (a segment's vector is the mean of its members, not the encoding
+    # of any single text). When present, FudgeCosts uses it instead of encoding
+    # `text`. compare/repr off so it never breaks dataclass equality or logging.
+    embedding: "np.ndarray | None" = field(default=None, compare=False, repr=False)
 
 
 @dataclass

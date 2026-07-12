@@ -1,0 +1,256 @@
+{
+  "model": "gpt-oss-20b",
+  "variant": "v3",
+  "passes": [
+    4,
+    5,
+    6
+  ],
+  "stability": {
+    "P5": {
+      "values": [
+        1.6047180448377054,
+        1.5902444960418702,
+        1.5697328503638286
+      ],
+      "spread": 0.034985194473876824,
+      "converged": false
+    },
+    "P6": {
+      "values": [
+        1.2396300694870828,
+        1.301917187829887,
+        1.4008683034640035
+      ],
+      "spread": 0.16123823397692072,
+      "converged": false
+    },
+    "P7": {
+      "values": [
+        1.0639729864379985,
+        1.0606247009348613,
+        1.0564606715676155
+      ],
+      "spread": 0.007512314870383063,
+      "converged": false
+    }
+  },
+  "rows": [
+    {
+      "phase": "P5",
+      "passes": 4,
+      "segment": false,
+      "raw_ratio": 1.3843403145962414,
+      "lm_ratio": 1.1352938724104387,
+      "lm_ci_lo": 1.1217378089001884,
+      "lm_ci_hi": 1.1481243212876593,
+      "coverage": 0.7733333333333333,
+      "converged": false,
+      "n_passes_run": 5
+    },
+    {
+      "phase": "P5",
+      "passes": 4,
+      "segment": true,
+      "raw_ratio": 1.1763713469483132,
+      "lm_ratio": 1.6047180448377054,
+      "lm_ci_lo": 1.4805988266559045,
+      "lm_ci_hi": 1.746788070612988,
+      "coverage": 0.7733333333333333,
+      "converged": false,
+      "n_passes_run": 5
+    },
+    {
+      "phase": "P5",
+      "passes": 5,
+      "segment": false,
+      "raw_ratio": 1.3901149070256247,
+      "lm_ratio": 1.1385157921875042,
+      "lm_ci_lo": 1.1244349171217072,
+      "lm_ci_hi": 1.1516868780114453,
+      "coverage": 0.7733333333333333,
+      "converged": false,
+      "n_passes_run": 6
+    },
+    {
+      "phase": "P5",
+      "passes": 5,
+      "segment": true,
+      "raw_ratio": 1.1797609956260646,
+      "lm_ratio": 1.5902444960418702,
+      "lm_ci_lo": 1.4684127143473267,
+      "lm_ci_hi": 1.7273251877865317,
+      "coverage": 0.7733333333333333,
+      "converged": false,
+      "n_passes_run": 6
+    },
+    {
+      "phase": "P5",
+      "passes": 6,
+      "segment": false,
+      "raw_ratio": 1.3920210996669977,
+      "lm_ratio": 1.1386571868877493,
+      "lm_ci_lo": 1.124792861674646,
+      "lm_ci_hi": 1.1517106479757981,
+      "coverage": 0.7733333333333333,
+      "converged": false,
+      "n_passes_run": 7
+    },
+    {
+      "phase": "P5",
+      "passes": 6,
+      "segment": true,
+      "raw_ratio": 1.1830102405679759,
+      "lm_ratio": 1.5697328503638286,
+      "lm_ci_lo": 1.4465455031025825,
+      "lm_ci_hi": 1.7062689954650536,
+      "coverage": 0.7733333333333333,
+      "converged": false,
+      "n_passes_run": 7
+    },
+    {
+      "phase": "P6",
+      "passes": 4,
+      "segment": false,
+      "raw_ratio": 1.1116666861547972,
+      "lm_ratio": 1.157401364433644,
+      "lm_ci_lo": 1.1508966874717255,
+      "lm_ci_hi": 1.1638548746675375,
+      "coverage": 0.94,
+      "converged": false,
+      "n_passes_run": 5
+    },
+    {
+      "phase": "P6",
+      "passes": 4,
+      "segment": true,
+      "raw_ratio": 1.3760525043589742,
+      "lm_ratio": 1.2396300694870828,
+      "lm_ci_lo": 1.1938524850037293,
+      "lm_ci_hi": 1.286433529488892,
+      "coverage": 0.94,
+      "converged": false,
+      "n_passes_run": 5
+    },
+    {
+      "phase": "P6",
+      "passes": 5,
+      "segment": false,
+      "raw_ratio": 1.1259634827930372,
+      "lm_ratio": 1.170034315254471,
+      "lm_ci_lo": 1.1633006694596884,
+      "lm_ci_hi": 1.176835941888487,
+      "coverage": 0.94,
+      "converged": false,
+      "n_passes_run": 6
+    },
+    {
+      "phase": "P6",
+      "passes": 5,
+      "segment": true,
+      "raw_ratio": 1.457216101866212,
+      "lm_ratio": 1.301917187829887,
+      "lm_ci_lo": 1.2525956784263539,
+      "lm_ci_hi": 1.3510361202479746,
+      "coverage": 0.94,
+      "converged": false,
+      "n_passes_run": 6
+    },
+    {
+      "phase": "P6",
+      "passes": 6,
+      "segment": false,
+      "raw_ratio": 1.1356893888546804,
+      "lm_ratio": 1.1808828188883762,
+      "lm_ci_lo": 1.173720446118155,
+      "lm_ci_hi": 1.1879755286441485,
+      "coverage": 0.94,
+      "converged": false,
+      "n_passes_run": 7
+    },
+    {
+      "phase": "P6",
+      "passes": 6,
+      "segment": true,
+      "raw_ratio": 1.526088144427063,
+      "lm_ratio": 1.4008683034640035,
+      "lm_ci_lo": 1.3434078030924785,
+      "lm_ci_hi": 1.4592656969000437,
+      "coverage": 0.94,
+      "converged": false,
+      "n_passes_run": 7
+    },
+    {
+      "phase": "P7",
+      "passes": 4,
+      "segment": false,
+      "raw_ratio": 1.0643240172063604,
+      "lm_ratio": 1.0488994658302473,
+      "lm_ci_lo": 1.0451353055870976,
+      "lm_ci_hi": 1.0528627982793528,
+      "coverage": 0.9266666666666666,
+      "converged": false,
+      "n_passes_run": 5
+    },
+    {
+      "phase": "P7",
+      "passes": 4,
+      "segment": true,
+      "raw_ratio": 1.0874205911149666,
+      "lm_ratio": 1.0639729864379985,
+      "lm_ci_lo": 1.0464602773818672,
+      "lm_ci_hi": 1.083661072046931,
+      "coverage": 0.9266666666666666,
+      "converged": false,
+      "n_passes_run": 5
+    },
+    {
+      "phase": "P7",
+      "passes": 5,
+      "segment": false,
+      "raw_ratio": 1.0643890032890446,
+      "lm_ratio": 1.0488463582536787,
+      "lm_ci_lo": 1.0451045191558825,
+      "lm_ci_hi": 1.052803147273834,
+      "coverage": 0.9266666666666666,
+      "converged": false,
+      "n_passes_run": 6
+    },
+    {
+      "phase": "P7",
+      "passes": 5,
+      "segment": true,
+      "raw_ratio": 1.0808813751055266,
+      "lm_ratio": 1.0606247009348613,
+      "lm_ci_lo": 1.0427655723972842,
+      "lm_ci_hi": 1.0797869932043145,
+      "coverage": 0.9266666666666666,
+      "converged": false,
+      "n_passes_run": 6
+    },
+    {
+      "phase": "P7",
+      "passes": 6,
+      "segment": false,
+      "raw_ratio": 1.0641208162145797,
+      "lm_ratio": 1.0485486246277456,
+      "lm_ci_lo": 1.0446802246547753,
+      "lm_ci_hi": 1.0525763987892247,
+      "coverage": 0.9266666666666666,
+      "converged": false,
+      "n_passes_run": 7
+    },
+    {
+      "phase": "P7",
+      "passes": 6,
+      "segment": true,
+      "raw_ratio": 1.0774636243344107,
+      "lm_ratio": 1.0564606715676155,
+      "lm_ci_lo": 1.0391979973222185,
+      "lm_ci_hi": 1.0744927419107975,
+      "coverage": 0.9266666666666666,
+      "converged": false,
+      "n_passes_run": 7
+    }
+  ]
+}

@@ -37,6 +37,7 @@ from fudge.data_loader import (
 )
 from fudge.embeddings import EmbeddingCache
 from fudge.fudge_efficient import fudge_efficient
+from fudge.segment import segment_conversation
 from fudge.splits import load_split, split_conversations
 
 
@@ -89,6 +90,8 @@ def evaluate_phase(
     emb: EmbeddingCache,
     label_root: Path,
     taxonomy_method: str,
+    segment: bool = False,
+    min_run: int = 2,
 ) -> dict | None:
     convs = load_thousand_voices_dialogues(tv_dir, require_phases=(phase,))
     label_dir = label_root / phase / taxonomy_method / "whole"
@@ -117,6 +120,16 @@ def evaluate_phase(
     flow, all_buckets = build_flow_from_conversations(train_labelled, label_source=labels)
     costs = FudgeCosts(emb, all_buckets)
 
+    # Sanity re-validation under --segment. NOTE: TV labels are agent-only, so
+    # the user side is a single `_user_turn` bucket — segment_conversation leaves
+    # single-bucket streams uncollapsed, but the agent stream still collapses
+    # across the ~8-20 label taxonomy, so ratios WILL move. The check here is
+    # that discrimination significance survives segmentation, not invariance.
+    if segment:
+        test = [segment_conversation(c, all_buckets, emb, min_run=min_run) for c in test]
+        negatives = [segment_conversation(c, all_buckets, emb, min_run=min_run)
+                     for c in negatives]
+
     pos_scores = _score(test, flow, costs, desc=f"{phase}/in")
     neg_scores = _score(negatives, flow, costs, desc=f"{phase}/out")
 
@@ -129,6 +142,7 @@ def evaluate_phase(
         "n_test_in": len(test),
         "n_test_out": len(negatives),
         "n_dag_nodes": flow.num_nodes,
+        "segmented": segment, "min_run": min_run if segment else None,
         "in_mean": float(pos_scores.mean()),
         "in_std": float(pos_scores.std(ddof=1)) if len(pos_scores) > 1 else 0.0,
         "out_mean": float(neg_scores.mean()),
@@ -147,7 +161,12 @@ def main() -> None:
                     choices=["single_prompt", "hybrid"])
     ap.add_argument("--phases", nargs="+", default=None)
     ap.add_argument("--split-path", default=str(SPLIT_PATH))
-    ap.add_argument("--out", default="experiments/tv_prefix_tree_discrimination.json")
+    ap.add_argument("--segment", action="store_true",
+                    help="Re-validate under granularity-normalised FuDGE (segment test convs "
+                         "against the prefix-tree buckets). Agent-side collapse shifts the "
+                         "ratios; the check is that significance survives.")
+    ap.add_argument("--min-run", type=int, default=2)
+    ap.add_argument("--out", default=None)
     args = ap.parse_args()
 
     split_meta = load_split(args.split_path)
@@ -161,7 +180,8 @@ def main() -> None:
 
     results = []
     for phase in phases:
-        r = evaluate_phase(phase, args.tv_dir, split_meta, emb, label_root, args.taxonomy_method)
+        r = evaluate_phase(phase, args.tv_dir, split_meta, emb, label_root, args.taxonomy_method,
+                           segment=args.segment, min_run=args.min_run)
         if r is None:
             print(f"  [skip] {phase}: no convs"); continue
         if r.get("skipped"):
@@ -195,7 +215,9 @@ def main() -> None:
     print(f"{n_pass}/{n} phases pass at Bonferroni alpha={bonf:.4f}")
     print(summary["verdict"])
 
-    out = Path(args.out); out.parent.mkdir(parents=True, exist_ok=True)
+    out = Path(args.out) if args.out else Path(
+        f"experiments/tv_prefix_tree_discrimination{'_seg' if args.segment else ''}.json")
+    out.parent.mkdir(parents=True, exist_ok=True)
     with open(out, "w", encoding="utf-8") as f:
         json.dump({"summary": summary, "results": results, "split": split_meta}, f, indent=2)
     print(f"Wrote {out}")
