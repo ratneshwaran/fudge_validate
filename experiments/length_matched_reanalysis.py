@@ -19,14 +19,30 @@ Method: direct standardisation over length bins on the common support.
   - keep bins with >= MIN_PER_BIN in-phase AND out-of-phase convs;
   - lm_ratio = sum_b w_b * mean_out_b / sum_b w_b * mean_in_b, w_b = n_in_b
     (i.e. out-of-phase means reweighted to the in-phase length distribution);
+  - lm_ratio 95% CI: percentile bootstrap resampling conversations within each
+    matched bin (n_boot, default 2000) — the point estimate now ships with an
+    error bar (2026-07 review);
   - one-sided permutation test: shuffle in/out labels WITHIN each bin,
     p = P(lm_ratio_perm >= lm_ratio_observed);
-  - coverage = fraction of in-phase conversations inside matched bins.
+  - coverage = fraction of in-phase conversations inside matched bins;
+  - out_coverage = fraction of OUT-of-phase (negative) convs inside matched bins;
+    1 - out_coverage is the share of negatives the common-support restriction drops;
+  - in_phase_rho = Spearman(in_score, original length) — the within-phase axis the
+    length confound was DEFINED on (block_rhos below only inspects OUT-of-phase blocks).
 
 CAVEAT (2026-06 audit): at these sample sizes (150 in / 750 out) the permutation
 p saturates at its floor 1/(n_perm+1) for essentially EVERY cell — including
 lm_ratio ~ 1.01 cells with no meaningful effect. p_perm confirms direction only;
-the informative statistic is the lm_ratio magnitude (vs the 1.3 effect-size bar).
+the informative statistic is the lm_ratio magnitude (with its CI) vs the 1.3
+effect-size bar.
+
+NOTE (2026-07 review): "--segment removes the confound (rho -> ~0)" is imprecise.
+Segmentation SHIFTS the score to the DAG's granularity: in-phase rho(score, original
+length) flips sign (e.g. P5 +0.64 -> -0.58) and a new dependence on the SEGMENT count
+appears (rho up to -0.90); a few out-blocks against the longest phase (P10) keep
+rho ~ +0.7 on lengths ABOVE the in-phase support. The length-matched ratio stays valid
+because it BINS ON ORIGINAL length, so this residual/shifted dependence is controlled
+by construction — read in_phase_rho + the CI, not the "rho -> 0" gloss.
 
 Score-to-length alignment is reconstructed from the split order (the scoring
 scripts iterate split_meta["splits"] insertion order) and VALIDATED per
@@ -87,17 +103,25 @@ def load_test_lengths(tv_dir: str, split_meta: dict) -> dict[str, list[int]]:
 
 
 def length_matched(in_s, in_l, out_s, out_l, bin_w=3, min_per_bin=5,
-                   n_perm=10000, seed=0):
+                   n_perm=10000, n_boot=2000, alpha=0.05, seed=0):
     """Direct standardisation of out-of-phase scores to the in-phase length
-    distribution + within-bin permutation test. Returns a result dict."""
+    distribution, with a within-bin bootstrap CI on the ratio and a within-bin
+    permutation test. Returns a result dict.
+
+    Reported alongside the point estimate (2026-07 review): a percentile bootstrap
+    CI (resample conversations within each matched bin), the in-phase `coverage`
+    AND `out_coverage` (1 - out_coverage = fraction of negatives dropped by the
+    common-support restriction). p_perm saturates at these sample sizes — read
+    lm_ratio and its CI, not p."""
     in_s, in_l = np.asarray(in_s), np.asarray(in_l)
     out_s, out_l = np.asarray(out_s), np.asarray(out_l)
     in_bin, out_bin = in_l // bin_w, out_l // bin_w
     bins = [b for b in np.unique(in_bin)
             if (in_bin == b).sum() >= min_per_bin and (out_bin == b).sum() >= min_per_bin]
     if not bins:
-        return {"lm_ratio": float("nan"), "coverage": 0.0, "p_perm": float("nan"),
-                "n_bins": 0}
+        return {"lm_ratio": float("nan"), "coverage": 0.0, "out_coverage": 0.0,
+                "lm_ci_lo": float("nan"), "lm_ci_hi": float("nan"),
+                "p_perm": float("nan"), "n_bins": 0}
 
     def standardized_ratio(in_scores_by_bin, out_scores_by_bin, weights):
         num = sum(w * o.mean() for w, o in zip(weights, out_scores_by_bin))
@@ -109,6 +133,22 @@ def length_matched(in_s, in_l, out_s, out_l, bin_w=3, min_per_bin=5,
     w = [len(x) for x in in_by]
     obs = standardized_ratio(in_by, out_by, w)
     coverage = sum(w) / len(in_s)
+    out_coverage = sum(len(x) for x in out_by) / len(out_s)
+
+    # Bootstrap CI: resample conversations WITHIN each matched bin (weights fixed
+    # at the observed in-phase bin counts). Own rng, seeded independently, so the
+    # permutation stream below stays bit-identical to pre-2026-07 runs.
+    if n_boot and n_boot > 0:
+        boot_rng = np.random.default_rng(seed + 12345)
+        boot = np.empty(n_boot)
+        for b in range(n_boot):
+            ins = [i[boot_rng.integers(0, len(i), len(i))] for i in in_by]
+            outs = [o[boot_rng.integers(0, len(o), len(o))] for o in out_by]
+            boot[b] = standardized_ratio(ins, outs, w)
+        lm_ci_lo = float(np.nanquantile(boot, alpha / 2))
+        lm_ci_hi = float(np.nanquantile(boot, 1 - alpha / 2))
+    else:
+        lm_ci_lo = lm_ci_hi = float("nan")
 
     # Permutation: within each matched bin, shuffle in/out labels.
     rng = np.random.default_rng(seed)
@@ -125,6 +165,8 @@ def length_matched(in_s, in_l, out_s, out_l, bin_w=3, min_per_bin=5,
             count += 1
     p = (count + 1) / (n_perm + 1)
     return {"lm_ratio": float(obs), "coverage": float(coverage),
+            "out_coverage": float(out_coverage),
+            "lm_ci_lo": lm_ci_lo, "lm_ci_hi": lm_ci_hi,
             "p_perm": float(p), "n_bins": len(bins)}
 
 
@@ -149,6 +191,8 @@ def main():
     ap.add_argument("--bin-width", type=int, default=3)
     ap.add_argument("--min-per-bin", type=int, default=5)
     ap.add_argument("--n-perm", type=int, default=10000)
+    ap.add_argument("--n-boot", type=int, default=2000,
+                    help="Bootstrap resamples for the lm_ratio 95%% CI (0 disables).")
     ap.add_argument("--results", nargs="+", default=None,
                     help="Override result files as label=path. Use this to point at the "
                          "--segment outputs, e.g. "
@@ -179,8 +223,8 @@ def main():
         if not isinstance(rows, list):
             rows = [rows]
         print(f"\n=== {name} ===")
-        print(f"  {'cell':<10} {'raw':>6} {'lm':>6} {'cover':>6} {'p_perm':>9} "
-              f"{'bins':>4}  out-block rho range")
+        print(f"  {'cell':<10} {'raw':>6} {'lm':>6} {'lm 95% CI':>15} "
+              f"{'in_cov':>6} {'out_cov':>7} {'in_rho':>7} {'bins':>4}  out-block rho")
         for r in rows:
             if not isinstance(r, dict) or "in_scores" not in r:
                 continue
@@ -197,14 +241,19 @@ def main():
             raw = float(np.mean(r["out_scores"]) / np.mean(r["in_scores"]))
             lm = length_matched(r["in_scores"], in_l, r["out_scores"], out_l,
                                 bin_w=args.bin_width, min_per_bin=args.min_per_bin,
-                                n_perm=args.n_perm)
+                                n_perm=args.n_perm, n_boot=args.n_boot)
             rhos = block_rhos(r["out_scores"], lens, split_order, phase)
             rho_lo, rho_hi = min(rhos.values()), max(rhos.values())
-            print(f"  {cell:<10} {raw:>5.2f}x {lm['lm_ratio']:>5.2f}x "
-                  f"{lm['coverage']:>5.0%} {lm['p_perm']:>9.2e} {lm['n_bins']:>4}  "
-                  f"[{rho_lo:+.2f}, {rho_hi:+.2f}]")
+            # In-phase rho: the axis the confound was DEFINED on. block_rhos only
+            # inspects OUT-of-phase blocks, so it never sees this (2026-07 review).
+            in_rho_val, _ = stats.spearmanr(r["in_scores"], in_l)
+            in_rho = float(in_rho_val)
+            ci = f"[{lm['lm_ci_lo']:.2f},{lm['lm_ci_hi']:.2f}]"
+            print(f"  {cell:<10} {raw:>5.2f}x {lm['lm_ratio']:>5.2f}x {ci:>15} "
+                  f"{lm['coverage']:>6.0%} {lm['out_coverage']:>7.0%} {in_rho:>+7.2f} "
+                  f"{lm['n_bins']:>4}  [{rho_lo:+.2f}, {rho_hi:+.2f}]")
             all_results.append({"source": name, "cell": cell, "raw_ratio": raw,
-                                **lm, "out_block_rhos": rhos})
+                                "in_phase_rho": in_rho, **lm, "out_block_rhos": rhos})
 
     json.dump({"bin_width": args.bin_width, "min_per_bin": args.min_per_bin,
                "n_perm": args.n_perm, "results": all_results},

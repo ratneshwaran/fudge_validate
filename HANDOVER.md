@@ -13,14 +13,40 @@ where they disagree, **this file is the current truth** for TODO 5–8 status.
 GitHub, 8 commits ahead of `master`) holds everything below. `master` has only the docs
 cleanup. All three `.env` keys are populated (OpenAI, HF, OpenRouter).
 
-**The segmentation method is validated end-to-end.** Pilot (gpt-oss-20b v3 × P5/P6/P7,
-fresh DAGs, 100% alignment coverage, commit `28844be`):
+**The segmentation method holds up on a single-generation pilot** (gpt-oss-20b v3 ×
+P5/P6/P7, fresh DAGs, 100% alignment coverage, commit `28844be`; numbers corrected and
+error-barred after the 2026-07 adversarial review — caveats below):
 - raw FuDGE reproduced the length confound on new DAGs: out-block ρ(score, length)
-  = +0.92…+0.98;
-- `--segment` killed it (ρ ≈ 0/negative), and length-matched ratios ROSE:
-  P5 1.14→**1.59×**, P6 1.17→**1.30×**, P7 flat ~1.06 (that DAG is genuinely weak and
-  fails the new alternation validity gate).
-- Supervisor deck ready to send: `supervisor_update_2026-06-28.pptx` (untracked).
+  ≈ **+0.54…+0.98** (earlier summarised as "+0.92…+0.98" — the P6→P5 block is +0.54);
+- `--segment` does NOT zero ρ — it SHIFTS the score to the DAG's granularity. In-phase
+  ρ(score, original length) flips sign (P5 +0.64→−0.58, P6 +0.98→−0.23, P7 +0.98→+0.31)
+  and a new dependence on the segment COUNT appears (ρ up to −0.90); out-block ρ ≈
+  **−0.57…+0.72** (two blocks, both vs the long P10, stay ≈+0.7 on lengths ABOVE the
+  in-phase support, which the matched ratio never uses);
+- the length-matched ratio (binned on ORIGINAL length, so the shift is controlled by
+  construction) ROSE, now with a conversation-level bootstrap CI: **P5 1.14→1.59×
+  (95% CI [1.47, 1.73]; drops 58% of negatives via common support), P6 1.17→1.30×
+  ([1.25, 1.35]), P7 flat ~1.06× ([1.04, 1.08])**. P7's DAG is genuinely weak; its
+  alternation-gate exclusion is a real graph property but was added to the pass criterion
+  *after* P7's weakness was seen (git `6f48231`) → treat P7 as an honest null, not a win;
+- Supervisor deck: `supervisor_update_2026-06-28.pptx` (untracked; update its ρ/ratio
+  numbers to match the above before sending).
+
+**Caveats from the 2026-07 adversarial review (code + docs fixed in the same pass):**
+- `length_matched_reanalysis.py` now emits the bootstrap CI, out-of-phase coverage, and
+  the in-phase ρ (the axis the confound was defined on, which the old `block_rhos` never
+  checked). Rerun: `experiments/length_matched_reanalysis_2026-07.json`.
+- The alignment k-means did NOT converge at the r5 cutoff (`converged=False`, ~3–4%
+  churn), so absolute ratios are budget-sensitive point estimates.
+  `experiments/budget_sensitivity.py` sweeps passes 4/5/6: **P5 stable (1.61/1.59/1.57,
+  spread 0.04), P7 stable (~1.06), but P6's magnitude drifts (1.24/1.30/1.40, still
+  rising at pass 6)** — read P6's "1.30×" as approximate, not exact. Direction (>1) holds
+  for all three.
+- The CI captures conversation sampling only, NOT DAG-generation variance — still n=1
+  generation/cell; ≥3 generations for a generation error bar remains open (next-step 4).
+- Rule 2 (never compare to label strings) fires 0× here but is now guarded:
+  `build_flow_from_llm_dag(label_fallback=False)` / `--drop-empty-nodes` drops empty nodes
+  and rewires parents→children — use it for the scaled grid.
 
 **Next steps, in order:**
 1. Scale the grid: `generate_llm_dags.py` for deepseek-v3.2 (± kimi-k2, gpt-5.1) ×

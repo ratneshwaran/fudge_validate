@@ -39,6 +39,7 @@ def build_flow_from_llm_dag(
     emb: EmbeddingCache,
     drop_unknown: bool = True,
     reassign_passes: int = 0,
+    label_fallback: bool = True,
 ) -> tuple[DialogueFlow, list[IntentBucket], dict]:
     """Build (flow, all_buckets, stats) from a parsed LLM DAG + training convs.
 
@@ -53,6 +54,17 @@ def build_flow_from_llm_dag(
     re-assign against those real centroids (constrained k-means seeded by the
     labels, K fixed by node count) — the §11 mitigation for the one-pass
     "hub node" problem. Iterates until convergence or the pass budget.
+
+    `label_fallback` controls what happens to a node that wins NO training
+    utterance (an empty bucket):
+      True  (default): seed its bucket with the node LABEL string so
+        intent_centroid doesn't average over nothing. This makes FuDGE compare
+        utterances to a label-string embedding for that node — a deviation from
+        the "never compare to labels" rule. Kept as the default only so existing
+        aligned artifacts reproduce bit-for-bit.
+      False (Rule-2 guard): DROP the empty node and rewire its parents to its
+        children, so no label-string centroid ever enters scoring. Prefer this
+        for new/scaled runs (recorded in stats as n_empty_dropped).
     """
     raw_nodes = dag["nodes"]
     nodes = [n for n in raw_nodes
@@ -105,16 +117,22 @@ def build_flow_from_llm_dag(
         for i, text in enumerate(texts_a):
             assigned[nodes_a[int(assign[i])]].append(text)
 
-    # buckets: dedup assigned texts; fall back to the label if a node won nothing
-    # (an empty bucket would make intent_centroid average over nothing -> NaN).
+    # buckets: dedup assigned texts. A node that won nothing is EMPTY -> either
+    # seed with the label string (label_fallback=True, default) or drop it below.
+    # An empty bucket would make intent_centroid average over nothing -> NaN.
     buckets: dict[str, IntentBucket] = {}
-    n_empty = 0
+    empty_ids: list[str] = []
     for nid in ids:
         texts = list(dict.fromkeys(assigned[nid]))
         if not texts:
+            empty_ids.append(nid)
+            if not label_fallback:
+                continue  # dropped-and-rewired below; no bucket created
             texts = [label[nid]]
-            n_empty += 1
         buckets[nid] = IntentBucket(actor=actor[nid], utterances=texts, label=label[nid])
+    n_empty = len(empty_ids)
+    empty_set = set() if label_fallback else set(empty_ids)
+    surviving_ids = [nid for nid in ids if nid not in empty_set]
     all_buckets = list(buckets.values())
 
     # --- topology: keep only edges between surviving nodes, force acyclic, wire root ---
@@ -125,21 +143,35 @@ def build_flow_from_llm_dag(
             g.add_edge(e["from"], e["to"])
     n_backedges = _break_cycles(g)
 
+    # Rule-2 guard (label_fallback=False): excise each empty node, bridging its
+    # parents to its children so every root->leaf path stays connected. Iterate
+    # over the live graph so chains of empty nodes collapse correctly.
+    for nid in empty_set:
+        preds = list(g.predecessors(nid))
+        succs = list(g.successors(nid))
+        for p in preds:
+            for s in succs:
+                if p != s:
+                    g.add_edge(p, s)
+        g.remove_node(nid)
+
     flow = DialogueFlow()
-    for nid in ids:
+    for nid in surviving_ids:
         flow.add_node(nid, buckets[nid])
     for u, v in g.edges():
         flow.add_edge(u, v)
-    for nid in ids:
+    for nid in surviving_ids:
         if g.in_degree(nid) == 0:
             flow.add_edge(flow.root, nid)
 
     stats = {
-        "n_nodes": len(ids),
+        "n_nodes": len(surviving_ids),
         "n_edges": g.number_of_edges(),
-        "n_agent_nodes": len(by_actor["agent"]),
-        "n_user_nodes": len(by_actor["user"]),
-        "n_empty_buckets": n_empty,
+        "n_agent_nodes": sum(1 for nid in surviving_ids if actor[nid] == "agent"),
+        "n_user_nodes": sum(1 for nid in surviving_ids if actor[nid] == "user"),
+        "n_empty_buckets": n_empty if label_fallback else 0,
+        "n_empty_dropped": 0 if label_fallback else n_empty,
+        "label_fallback": label_fallback,
         "n_backedges_removed": n_backedges,
         "n_dropped_unknown": len(raw_nodes) - len(ids),
         "reassign_passes": reassign_passes,

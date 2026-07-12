@@ -63,8 +63,14 @@ def main():
                     help="0 = one-pass label-anchor NN. >0 = recompute centroids "
                          "from assigned utterances and re-assign (§11 hub fix). "
                          "Artifacts get an _r<N> suffix so one-pass stays intact.")
+    ap.add_argument("--drop-empty-nodes", action="store_true",
+                    help="Rule-2 guard: drop nodes that win no training utterance "
+                         "(rewire parents->children) instead of the label-string "
+                         "fallback. Artifacts get a _nofb suffix so the default "
+                         "label-fallback aligned files are never overwritten.")
     args = ap.parse_args()
     suffix = "" if args.reassign_passes == 0 else f"_r{args.reassign_passes}"
+    suffix += "_nofb" if args.drop_empty_nodes else ""
 
     split_meta = load_split(args.split_path)
     emb = EmbeddingCache()
@@ -82,7 +88,8 @@ def main():
 
             train = _phase_train(args.tv_dir, split_meta, phase, train_cache)
             flow, _buckets, stats = build_flow_from_llm_dag(
-                dag, train, emb, reassign_passes=args.reassign_passes)
+                dag, train, emb, reassign_passes=args.reassign_passes,
+                label_fallback=not args.drop_empty_nodes)
             stats["n_train_align"] = len(train)
 
             out_dir = dag_path.parent

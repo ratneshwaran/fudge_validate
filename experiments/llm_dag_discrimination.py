@@ -94,7 +94,7 @@ def _load_phase_convs(tv_dir, split_meta, cache):
 
 
 def evaluate(model, variant, phase, dags_root, phase_convs, emb, from_aligned,
-             suffix, reassign_passes, segment=False, min_run=2):
+             suffix, reassign_passes, segment=False, min_run=2, label_fallback=True):
     cell_dir = Path(dags_root) / model / variant / phase
     test = phase_convs[phase]["test"]
     negatives = []
@@ -122,7 +122,8 @@ def evaluate(model, variant, phase, dags_root, phase_convs, emb, from_aligned,
         if not dag.get("nodes"):
             return {"variant": variant, "phase": phase, "skipped": "empty dag (0 nodes)"}
         flow, all_buckets, bstats = build_flow_from_llm_dag(
-            dag, phase_convs[phase]["train"], emb, reassign_passes=reassign_passes)
+            dag, phase_convs[phase]["train"], emb, reassign_passes=reassign_passes,
+            label_fallback=label_fallback)
         n_train = len(phase_convs[phase]["train"])
     costs = FudgeCosts(emb, all_buckets)
 
@@ -175,12 +176,16 @@ def main():
     ap.add_argument("--min-run", type=int, default=2,
                     help="Segmentation smoothing: runs shorter than this flanked by the same "
                          "bucket are absorbed. Only used with --segment.")
+    ap.add_argument("--drop-empty-nodes", action="store_true",
+                    help="Rule-2 guard (inline builds only, i.e. without --from-aligned): drop "
+                         "nodes that win no training utterance and rewire parents->children "
+                         "instead of the label-string fallback. Adds _nofb to the output name.")
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
     suffix = "" if args.reassign_passes == 0 else f"_r{args.reassign_passes}"
     # aligned-flow lookup uses `suffix` (reassign passes only); the output filename
-    # also encodes segmentation so segmented runs don't overwrite raw ones.
-    out_suffix = suffix + ("_seg" if args.segment else "")
+    # also encodes segmentation / the Rule-2 guard so those runs don't overwrite raw ones.
+    out_suffix = suffix + ("_seg" if args.segment else "") + ("_nofb" if args.drop_empty_nodes else "")
 
     split_meta = load_split(args.split_path)
     print(f"Loaded split {split_meta['version']}: "
@@ -194,7 +199,8 @@ def main():
         for phase in args.phases:
             r = evaluate(args.model, variant, phase, args.dags_root, phase_convs, emb,
                          args.from_aligned, suffix, args.reassign_passes,
-                         segment=args.segment, min_run=args.min_run)
+                         segment=args.segment, min_run=args.min_run,
+                         label_fallback=not args.drop_empty_nodes)
             results.append(r)
             if r.get("skipped"):
                 print(f"  [skip] {phase}: {r['skipped']}"); continue
